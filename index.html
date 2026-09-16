@@ -1,0 +1,3269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hararu · 樱花音乐盒</title>
+  <style>
+    /* 隐藏 vConsole 调试悬浮按钮 */
+    #__vconsole, .vc-switch { display: none !important; }
+
+    /* ===== 输入法控制：默认禁用 IME，仅在文本输入框启用（避免快捷键被中文输入法拦截）===== */
+    /* 说明：ime-mode 属旧标准，Chromium/WebView2 可能忽略；即使生效，也保证快捷键
+       在输入法合成期间不会误触发（已在 JS 用 isComposing/keyCode 229 兜底）。 */
+    body, body * { ime-mode: disabled !important; }
+    input[type="text"], input[type="search"], input[type="url"],
+    input[type="password"], input[type="email"], input[type="number"],
+    input:not([type]), textarea, [contenteditable="true"] { ime-mode: active !important; }
+
+    :root {
+      color-scheme: light;
+      --bg-1: #fdf1f7;
+      --bg-2: #f8e3ee;
+      --panel: rgba(255, 255, 255, .72);
+      --panel-solid: #fffbfd;
+      --text: #4a3f45;
+      --muted: #9d8a94;
+      --line: rgba(214, 150, 180, .30);
+      --accent: #e79bbd;
+      --accent-deep: #d07fa4;
+      --accent-2: #b9a3d9;
+      --danger: #e56d75;
+      --shadow: 0 24px 70px rgba(210, 140, 170, .28);
+      --soft-shadow: 0 8px 30px rgba(210, 150, 175, .16);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 800px at 15% 10%, #fff0f6 0%, transparent 55%),
+        radial-gradient(1000px 700px at 90% 85%, #fce3ee 0%, transparent 55%),
+        linear-gradient(160deg, var(--bg-1), var(--bg-2));
+      color: var(--text);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    button, input { font: inherit; }
+
+    /* ===== 飘落花瓣装饰 ===== */
+    .petal {
+      position: fixed;
+      top: -6vh;
+      width: 12px;
+      height: 12px;
+      border-radius: 80% 0 55% 50% / 55% 0 80% 50%;
+      background: linear-gradient(135deg, #ffd7e8, #ffb7d3);
+      opacity: .55;
+      pointer-events: none;
+      z-index: 0;
+      animation: petalFall linear infinite;
+    }
+    @keyframes petalFall {
+      0%   { transform: translate3d(0, -8vh, 0) rotate(0deg); }
+      100% { transform: translate3d(-14vw, 115vh, 0) rotate(340deg); }
+    }
+
+    .shell {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(340px, 44vw) 1fr;
+      height: 100vh;
+      min-height: 100vh;
+      isolation: isolate;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        linear-gradient(90deg, rgba(253, 241, 247, .28), rgba(253, 241, 247, .88)),
+        var(--cover, linear-gradient(150deg, #ffd9e8, #f7c3da)) center / cover no-repeat;
+      transform: scale(1.04);
+      filter: saturate(.92) blur(0px);
+      transition: background 0.6s ease;
+    }
+    .backdrop::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 244, 248, .30);
+      backdrop-filter: blur(16px);
+    }
+
+    /* ===== 左侧：正在播放 ===== */
+    .now {
+      display: grid;
+      align-content: end;
+      height: 100vh;
+      min-height: 0;
+      padding: 48px 40px 56px;
+      overflow: hidden;
+    }
+
+    .cover-wrap {
+      width: min(420px, 100%);
+      aspect-ratio: 1;
+      border: 2px solid rgba(255, 255, 255, .85);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background: linear-gradient(150deg, #ffe3ef, #fbd7e6);
+      position: relative;
+    }
+    .cover-wrap::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 22px;
+      box-shadow: inset 0 0 0 1px rgba(214, 150, 180, .25);
+      pointer-events: none;
+    }
+    .cover-wrap.playing .cover {
+      animation: coverGlow 3s ease-in-out infinite;
+    }
+    @keyframes coverGlow {
+      0%, 100% { filter: brightness(1); }
+      50%      { filter: brightness(1.06); }
+    }
+    .cover {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: opacity .45s ease;
+    }
+
+    .track-meta {
+      width: min(520px, 100%);
+      margin-top: 26px;
+    }
+    .eyebrow {
+      color: var(--accent-deep);
+      font-size: 13px;
+      letter-spacing: .12em;
+      margin: 0 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .eyebrow .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(231, 155, 189, .22);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4.6vw, 56px);
+      line-height: 1.08;
+      letter-spacing: .01em;
+      overflow-wrap: anywhere;
+      font-weight: 700;
+    }
+    .artist {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    /* ===== 右侧工作区 ===== */
+    .workspace {
+      min-width: 0;
+      height: 100vh;
+      min-height: 0;
+      padding: 30px;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) minmax(120px, auto);
+      gap: 16px;
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .search {
+      position: relative;
+      flex: 1;
+      min-width: 150px;
+    }
+    .search input {
+      width: 100%;
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 0 14px 0 40px;
+      background: rgba(255, 255, 255, .72);
+      color: var(--text);
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .search input:focus {
+      border-color: rgba(208, 127, 164, .65);
+      box-shadow: 0 0 0 4px rgba(231, 155, 189, .18);
+    }
+    .search span {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    .button {
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 0 16px;
+      color: var(--text);
+      background: rgba(255, 255, 255, .72);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      white-space: nowrap;
+      transition: background .2s, border-color .2s, transform .12s, box-shadow .2s;
+    }
+    .button:hover {
+      border-color: rgba(208, 127, 164, .55);
+      background: rgba(255, 240, 247, .95);
+      box-shadow: var(--soft-shadow);
+    }
+    .button:active { transform: translateY(1px); }
+    .button.primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #fff;
+      border-color: transparent;
+      font-weight: 700;
+      box-shadow: 0 8px 22px rgba(231, 155, 189, .42);
+    }
+    .button.small {
+      height: 36px;
+      padding-inline: 12px;
+      font-size: 13px;
+      border-radius: 11px;
+    }
+
+    #folderInput, #coverFilesInput, #coverFolderInput {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ===== 封面来源栏 ===== */
+    .coverbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .coverbar-label {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .segmented {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, .72);
+    }
+    .segment {
+      height: 36px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      padding: 0 14px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .2s, color .2s;
+    }
+    .segment:last-child { border-right: 0; }
+    .segment.active {
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      font-weight: 700;
+    }
+    .api-input {
+      flex: 1 1 300px;
+      min-width: 200px;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      padding: 0 12px;
+      background: rgba(255, 255, 255, .72);
+      color: var(--text);
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .api-input:focus {
+      border-color: rgba(208, 127, 164, .65);
+      box-shadow: 0 0 0 4px rgba(231, 155, 189, .18);
+    }
+    .cover-count {
+      color: var(--muted);
+      font-size: 13px;
+      min-width: 5em;
+    }
+
+    .path-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, .55);
+      border: 1px dashed rgba(214, 150, 180, .45);
+      border-radius: 11px;
+      padding: 4px 8px;
+    }
+    .path-chip input {
+      width: 170px;
+      background: transparent;
+      border: 0;
+      color: var(--text);
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+    }
+    .path-chip input:focus { background: rgba(255, 255, 255, .8); }
+    .path-status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ===== 播放列表 ===== */
+    .library {
+      min-height: 0;
+      height: 100%;
+      max-height: 100%;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      position: relative;
+      z-index: 1;
+      box-shadow: var(--soft-shadow);
+    }
+    .library-head {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) 96px 40px;
+      gap: 12px;
+      padding: 12px 18px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      align-items: center;
+    }
+    .list {
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      overscroll-behavior: contain;
+    }
+    .list::-webkit-scrollbar { width: 10px; }
+    .list::-webkit-scrollbar-thumb {
+      background: rgba(208, 127, 164, .30);
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background-clip: content-box;
+    }
+    .list::-webkit-scrollbar-track { background: transparent; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) 96px 40px;
+      gap: 12px;
+      align-items: center;
+      min-height: 56px;
+      padding: 8px 18px;
+      border-bottom: 1px solid rgba(214, 150, 180, .12);
+      cursor: pointer;
+      transition: background .15s;
+      position: relative;
+    }
+    .row:hover { background: rgba(255, 226, 238, .55); }
+    .row.active {
+      background: linear-gradient(90deg, rgba(231, 155, 189, .20), rgba(231, 155, 189, .06));
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .index {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .row.active .index { color: var(--accent-deep); font-weight: 700; }
+    .song-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row.active .song-title { color: var(--accent-deep); font-weight: 600; }
+    .song-title mark {
+      background: rgba(231, 155, 189, .35);
+      color: var(--accent-deep);
+      border-radius: 3px;
+      padding: 0 1px;
+    }
+    .song-path {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .duration {
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .row-actions {
+      opacity: 0;
+      transition: opacity .15s;
+      color: var(--muted);
+      text-align: center;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .row:hover .row-actions, .row.active .row-actions { opacity: 1; }
+    .row-actions:hover { color: var(--danger); }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 260px;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+      line-height: 1.8;
+    }
+    .empty .big { font-size: 40px; margin-bottom: 8px; }
+
+    /* ===== 播放器控制 ===== */
+    .player {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .82);
+      backdrop-filter: blur(18px);
+      padding: 16px 20px;
+      display: grid;
+      gap: 12px;
+      min-height: 120px;
+      position: relative;
+      z-index: 20;
+      flex-shrink: 0;
+      box-shadow: 0 14px 44px rgba(210, 150, 175, .24);
+    }
+    .timeline {
+      display: grid;
+      grid-template-columns: 46px 1fr 46px;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-deep);
+      height: 6px;
+      cursor: pointer;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 14px;
+    }
+    .main-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-self: center;
+    }
+    .right-controls {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 200px;
+    }
+    .icon-button {
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255, 240, 247, .7);
+      color: var(--text);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      transition: background .2s, transform .12s, box-shadow .2s, color .2s;
+    }
+    .icon-button svg,
+    .right-controls span svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+    .icon-button:hover {
+      background: rgba(255, 226, 238, .95);
+      box-shadow: var(--soft-shadow);
+    }
+    .icon-button:active { transform: scale(.94); }
+    .icon-button.play {
+      width: 54px;
+      height: 54px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #fff;
+      border-color: transparent;
+      font-size: 20px;
+      box-shadow: 0 10px 26px rgba(231, 155, 189, .5);
+    }
+    .icon-button.on {
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      border-color: transparent;
+    }
+
+    .drop-active .library {
+      outline: 2px solid var(--accent);
+      outline-offset: 4px;
+    }
+
+    /* ===== 自定义标题栏（无边框窗口，全透明悬浮） ===== */
+    .titlebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 12px;
+      background: transparent;
+      border-bottom: none;
+      /* 高于专注模式遮罩(2000)，使窗口控制与专注切换始终可用 */
+      z-index: 3000;
+      user-select: none;
+    }
+    .titlebar-title {
+      display: none;
+    }
+    .titlebar-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 100%;
+      padding-right: 2px;
+    }
+    .titlebar-controls button {
+      width: 36px;
+      height: 30px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .42);
+      color: rgba(74, 63, 69, .8);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background .18s, color .18s, transform .12s, box-shadow .18s;
+      backdrop-filter: blur(6px);
+    }
+    .titlebar-controls button svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .titlebar-controls button:hover {
+      background: rgba(231, 155, 189, .30);
+      color: var(--accent-deep);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(210, 140, 170, .28);
+    }
+    .titlebar-controls button:active { transform: scale(.92); }
+    .titlebar-controls .tb-close:hover {
+      background: var(--danger);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(229, 109, 117, .4);
+    }
+    .titlebar-controls button.on {
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #fff;
+    }
+
+    /* ===== 专注模式（唱片 + 时钟 + 精致播放栏） ===== */
+    .focus-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(90% 70% at 50% 36%, rgba(231,155,189,.12), transparent 60%),
+        radial-gradient(70% 50% at 82% 92%, rgba(185,163,217,.10), transparent 55%),
+        radial-gradient(ellipse at center, #1b1218, #0c060a);
+      color: #f0e6ec;
+      user-select: none;
+      overflow: hidden;
+    }
+    .focus-overlay.show {
+      display: flex;
+    }
+
+    .focus-clock {
+      font-size: 66px;
+      font-weight: 200;
+      letter-spacing: 6px;
+      color: rgba(244,236,240,.92);
+      margin-bottom: 12px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      text-shadow: 0 0 34px rgba(231,155,189,.28);
+    }
+    .focus-date {
+      font-size: 13px;
+      color: rgba(240,230,236,.45);
+      letter-spacing: 3px;
+      margin-bottom: 40px;
+    }
+
+    /* 专注模式下标题栏按钮自动隐藏，鼠标移入顶部时暂时显示 */
+    body.focus-mode .titlebar-controls {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s ease;
+    }
+    body.focus-mode .titlebar-controls.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* 唱片形状：圆盘 + 细腻沟槽 + 中央封面贴标 + 光晕 */
+    .focus-record {
+      position: relative;
+      width: min(340px, 54vw);
+      height: min(340px, 54vw);
+      flex-shrink: 0;
+      border-radius: 50%;
+      background:
+        repeating-radial-gradient(circle at 50% 50%,
+          #222 0px, #222 1px, #0b0b0b 2px, #262626 3px, #0d0d0d 4px),
+        radial-gradient(circle at 50% 50%, #2a2a2a, #0b0b0b);
+      box-shadow:
+        0 0 60px rgba(231,155,189,.14),
+        0 26px 80px rgba(0,0,0,.6),
+        inset 0 0 26px rgba(0,0,0,.7),
+        inset 0 0 3px rgba(255,255,255,.07);
+      animation: focus-spin 20s linear infinite;
+      animation-play-state: paused;
+    }
+    .focus-record.playing { animation-play-state: running; }
+    .focus-record::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,.10), transparent 42%);
+      pointer-events: none;
+    }
+    .focus-record-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 84%;
+      height: 84%;
+      border-radius: 50%;
+      overflow: hidden;
+      box-shadow: 0 0 0 3px rgba(255,255,255,.10), inset 0 0 14px rgba(0,0,0,.6);
+      background: #2a2226;
+    }
+    .focus-record-label img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .focus-record-hole {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #0a0a0a;
+      z-index: 2;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.12);
+    }
+
+    @keyframes focus-spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    .focus-player {
+      margin-top: 38px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      width: min(440px, 80vw);
+    }
+    .focus-track {
+      font-size: 16px;
+      color: rgba(240,230,236,.78);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .focus-track::before {
+      content: "♪ ";
+      color: var(--accent);
+    }
+    .focus-timeline {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      font-size: 12px;
+      color: rgba(240,230,236,.5);
+      font-variant-numeric: tabular-nums;
+    }
+    .focus-timeline input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 5px;
+      cursor: pointer;
+    }
+    .focus-controls {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+    .focus-controls button {
+      width: 46px;
+      height: 46px;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,.08);
+      color: #f0e6ec;
+      font-size: 18px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+      transition: background .2s, transform .12s, box-shadow .2s;
+    }
+    .focus-controls button:hover {
+      background: rgba(255,255,255,.16);
+      transform: translateY(-1px);
+    }
+    .focus-controls button:active { transform: scale(.9); }
+    .focus-controls .focus-play {
+      width: 58px;
+      height: 58px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #1b1510;
+      font-size: 23px;
+      box-shadow: 0 8px 24px rgba(231,155,189,.45), inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .focus-controls .focus-play:hover {
+      background: linear-gradient(135deg, var(--accent-deep), var(--accent-2));
+      transform: translateY(-1px);
+    }
+    .focus-volume {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(240,230,236,.6);
+      font-size: 14px;
+      margin-top: 2px;
+    }
+    .focus-volume input[type="range"] {
+      width: 110px;
+      height: 5px;
+      accent-color: var(--accent);
+    }
+
+    /* 小窗模式下隐藏整个标题栏（去掉拖拽区，避免挡住右上角退出按钮）；
+       整个小窗改为可拖拽，交互元素除外 */
+    body.mini-mode .titlebar {
+      display: none;
+    }
+
+    /* ===== 小窗播放模式（重排版：渐变背景 + 封面高光 + 精致控制组） ===== */
+    .mini-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      display: none;
+      background:
+        radial-gradient(120% 90% at 16% 10%, rgba(231,155,189,.18), transparent 55%),
+        radial-gradient(90% 70% at 85% 95%, rgba(185,163,217,.12), transparent 50%),
+        radial-gradient(ellipse at center, #1b1218, #0d070b);
+      color: #f0e6ec;
+      user-select: none;
+      overflow: hidden;
+    }
+    .mini-overlay.show {
+      display: flex;
+    }
+    .mini-exit {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 4000;
+      width: 34px;
+      height: 30px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255,255,255,.14);
+      color: #f0e6ec;
+      font-size: 13px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+    }
+    .mini-exit.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .mini-exit:hover { background: rgba(255,255,255,.28); }
+    .mini-panel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      width: 100%;
+      height: 100%;
+      padding: 10px 16px;
+    }
+    .mini-art {
+      flex: 0 0 auto;
+      width: 130px;
+      aspect-ratio: 1;
+      border-radius: 14px;
+      overflow: hidden;
+      position: relative;
+      background: #000;
+      box-shadow:
+        0 12px 30px rgba(0,0,0,.55),
+        0 0 0 1px rgba(255,255,255,.10);
+    }
+    .mini-art::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 14px;
+      background: linear-gradient(150deg, rgba(255,255,255,.18), transparent 42%);
+      pointer-events: none;
+    }
+    .mini-art img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .mini-body {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+    }
+    .mini-track {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 13px;
+      color: rgba(240,230,236,.85);
+      min-width: 0;
+    }
+    .mini-track::before {
+      content: "♪";
+      color: var(--accent);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .mini-track span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .mini-timeline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10.5px;
+      color: rgba(240,230,236,.45);
+      font-variant-numeric: tabular-nums;
+    }
+    .mini-timeline input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 4px;
+      cursor: pointer;
+    }
+    .mini-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    .mini-controls button {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,.07);
+      color: #f0e6ec;
+      font-size: 14px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+      transition: background .2s, transform .12s, box-shadow .2s;
+    }
+    .mini-controls button:hover {
+      background: rgba(255,255,255,.16);
+      transform: translateY(-1px);
+    }
+    .mini-controls button:active { transform: scale(.9); }
+    .mini-controls .mini-play {
+      width: 46px;
+      height: 46px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      color: #1b1510;
+      font-size: 18px;
+      box-shadow: 0 6px 18px rgba(231,155,189,.45), inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .mini-controls .mini-play:hover {
+      background: linear-gradient(135deg, var(--accent-deep), var(--accent-2));
+      transform: translateY(-1px);
+    }
+
+    /* 服务状态提示条 */
+    .service-banner {
+      position: fixed;
+      top: 48px;
+      left: 0;
+      right: 0;
+      z-index: 999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 8px 14px;
+      background: linear-gradient(135deg, #fff2ec, #ffe3e3);
+      color: #b3544f;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(229, 109, 117, .35);
+      text-align: center;
+    }
+    .service-banner.visible { display: flex; }
+    .service-banner button {
+      border: 1px solid rgba(229, 109, 117, .5);
+      background: #fff;
+      color: #b3544f;
+      border-radius: 8px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .service-banner button:hover { background: rgba(229, 109, 117, .1); }
+
+    /* 壳版：全透明悬浮标题栏，按钮悬浮于右上角留白区，内容顶格铺满 */
+    body.has-titlebar { padding-top: 0; }
+    body.has-titlebar .shell { height: 100vh; min-height: 100vh; }
+    body.has-titlebar .now { height: 100vh; min-height: 100vh; }
+    body.has-titlebar .workspace {
+      height: 100vh;
+      min-height: 100vh;
+      /* 顶部为悬浮按钮留白，底部防止播放栏贴边 */
+      padding-top: 52px;
+      padding-bottom: 34px;
+    }
+
+    /* ===== 右键菜单 ===== */
+    .context-menu {
+      position: fixed;
+      z-index: 999;
+      min-width: 170px;
+      background: rgba(255, 251, 253, .97);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 16px 40px rgba(200, 130, 165, .30);
+      padding: 6px;
+      backdrop-filter: blur(10px);
+      animation: menuIn .12s ease;
+    }
+    @keyframes menuIn {
+      from { opacity: 0; transform: translateY(-4px) scale(.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .menu-item {
+      padding: 9px 12px;
+      font-size: 13px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+    }
+    .menu-item:hover { background: rgba(231, 155, 189, .18); }
+    .menu-item.danger { color: var(--danger); }
+    .menu-item.danger:hover { background: rgba(229, 109, 117, .12); }
+    .menu-sep {
+      height: 1px;
+      background: var(--line);
+      margin: 5px 8px;
+    }
+
+    /* ===== 小屏适配 ===== */
+    @media (max-width: 860px) {
+      body { overflow: hidden; }
+      .shell {
+        grid-template-columns: 1fr;
+        height: 100vh;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .now {
+        height: auto;
+        min-height: 120px;
+        padding: 20px 18px 10px;
+        grid-template-columns: 88px minmax(0, 1fr);
+        gap: 14px;
+        align-items: end;
+      }
+      .cover-wrap { width: 88px; }
+      .track-meta { margin: 0; }
+      h1 { font-size: 24px; }
+      .artist { font-size: 13px; }
+      .workspace {
+        height: auto;
+        min-height: 0;
+        padding: 12px 12px 18px;
+        grid-template-rows: auto auto minmax(0, 1fr) minmax(180px, auto);
+      }
+      .topbar { flex-wrap: wrap; }
+      .coverbar { align-items: stretch; }
+      .button { flex: 1; justify-content: center; }
+      .segmented { width: 100%; }
+      .segment { flex: 1; }
+      .api-input { min-width: 100%; }
+      .library { min-height: 0; max-height: 100%; }
+      .library-head, .row {
+        grid-template-columns: 34px minmax(0, 1fr) 62px 28px;
+        padding-inline: 12px;
+      }
+      .controls { grid-template-columns: 1fr; }
+      .main-controls, .right-controls { justify-self: center; }
+      .right-controls { width: 100%; min-width: 0; justify-content: center; }
+      .player { min-height: 180px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- 自定义标题栏：全透明悬浮，无边框无文字，仅窗口控制按钮 -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-title" data-tauri-drag-region>
+      <span>🌸</span>
+      <span>Hararu 樱花音乐盒</span>
+    </div>
+    <div class="titlebar-controls">
+      <button id="tbMini" type="button" title="小窗播放" aria-label="小窗播放">
+        <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="2"/><rect x="10" y="11" width="6" height="4" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button id="tbFocus" type="button" title="专注模式" aria-label="专注模式">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3.2M12 17.8V21M3 12h3.2M17.8 12H21M6 6l2.2 2.2M15.8 15.8 18 18M18 6l-2.2 2.2M8.2 15.8 6 18"/></svg>
+      </button>
+      <button id="tbPin" type="button" title="置顶窗口" aria-label="置顶窗口">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8l-1 5 3 4H6l3-4z"/><path d="M12 12v7"/></svg>
+      </button>
+      <button id="tbMin" type="button" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button id="tbMax" type="button" title="最大化" aria-label="最大化">
+        <svg viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="1"/></svg>
+      </button>
+      <button id="tbClose" class="tb-close" type="button" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 24 24"><path d="M6 6 L18 18 M18 6 L6 18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 服务状态提示 -->
+  <div class="service-banner" id="serviceBanner">
+    <span>本地服务未启动，保存功能不可用</span>
+    <button id="serviceRetry" type="button">重试</button>
+  </div>
+
+  <!-- 飘落花瓣装饰 -->
+  <div class="petal" style="left:8%;animation-duration:14s;animation-delay:0s;"></div>
+  <div class="petal" style="left:24%;animation-duration:19s;animation-delay:3s;width:10px;height:10px;"></div>
+  <div class="petal" style="left:41%;animation-duration:16s;animation-delay:6s;"></div>
+  <div class="petal" style="left:63%;animation-duration:22s;animation-delay:1.5s;width:9px;height:9px;"></div>
+  <div class="petal" style="left:82%;animation-duration:17s;animation-delay:4.5s;"></div>
+  <div class="petal" style="left:92%;animation-duration:20s;animation-delay:8s;width:11px;height:11px;"></div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <main class="shell" id="app">
+    <section class="now">
+      <div class="cover-wrap" id="coverWrap">
+        <img class="cover" id="cover" alt="" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffe3ef'/%3E%3Cstop offset='1' stop-color='%23f8c9dd'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='400' height='400' fill='url(%23g)'/%3E%3Ctext x='200' y='224' font-size='120' text-anchor='middle' fill='%23e79bbd' opacity='0.75'%3E%E2%99%AA%3C/text%3E%3C/svg%3E">
+      </div>
+      <div class="track-meta">
+        <p class="eyebrow" id="status"><span class="dot"></span>本地音乐</p>
+        <h1 id="title">选择音乐文件夹</h1>
+        <p class="artist" id="artist">支持 MP3、FLAC、WAV、OGG、M4A、AAC</p>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="topbar">
+        <div class="search">
+          <span>⌕</span>
+          <input id="search" type="search" placeholder="搜索歌曲 (Ctrl+F)">
+        </div>
+        <button class="button primary" id="pickFolder" type="button">＋ 导入文件夹</button>
+        <button class="button" id="pickFiles" type="button">＋ 导入歌曲</button>
+        <input id="folderInput" type="file" webkitdirectory directory multiple>
+        <input id="fileInput" type="file" accept="audio/*,.flac,.ogg" multiple hidden>
+        <input id="coverFilesInput" type="file" accept="image/*,.jpg,.jpeg,.png,.webp,.gif" multiple>
+        <input id="coverFolderInput" type="file" accept="image/*,.jpg,.jpeg,.png,.webp,.gif" webkitdirectory directory multiple>
+        <span class="path-chip">
+          <input id="pathInput" type="text" placeholder="音乐文件夹路径 (设一次永久记住)">
+          <button class="button small" id="savePathBtn" type="button">记住</button>
+          <span class="path-status" id="pathStatus"></span>
+        </span>
+      </div>
+
+      <div class="coverbar">
+        <span class="coverbar-label">封面来源</span>
+        <div class="segmented" role="group" aria-label="封面来源">
+          <button class="segment" id="coverApiMode" type="button">API 图片</button>
+          <button class="segment" id="coverLocalMode" type="button">本地图片</button>
+        </div>
+        <input class="api-input" id="coverApiInput" type="url" spellcheck="false" aria-label="API 地址">
+        <input class="api-input" id="coverRefererInput" type="url" spellcheck="false" placeholder="Referer (可选,如 https://weibo.com/)" style="width:150px;" aria-label="Referer">
+        <button class="button small" id="applyCoverApi" type="button">应用 API</button>
+        <button class="button small" id="pickCoverFiles" type="button">＋ 选择图片</button>
+        <button class="button small" id="pickCoverFolder" type="button">＋ 图片文件夹</button>
+        <span class="path-chip">
+          <input id="coverPathInput" type="text" placeholder="封面图片文件夹路径">
+          <button class="button small" id="saveCoverPathBtn" type="button">记住</button>
+          <span class="path-status" id="coverPathStatus"></span>
+        </span>
+        <span class="cover-count" id="coverCount">本地代理 API</span>
+      </div>
+
+      <div class="library">
+        <div class="library-head">
+          <span>#</span>
+          <span>歌曲</span>
+          <span>时长</span>
+          <span title="移除">✕</span>
+        </div>
+        <div class="list" id="list">
+          <div class="empty"><div class="big">🌸</div>拖入歌曲，或导入音乐文件夹</div>
+        </div>
+      </div>
+
+      <div class="player">
+        <div class="timeline">
+          <span id="currentTime">0:00</span>
+          <input id="seek" type="range" min="0" max="1000" value="0">
+          <span id="totalTime">0:00</span>
+        </div>
+        <div class="controls">
+          <div></div>
+          <div class="main-controls">
+            <button class="icon-button" id="prev" type="button" title="上一首">⏮</button>
+            <button class="icon-button play" id="play" type="button" title="播放">▶</button>
+            <button class="icon-button" id="next" type="button" title="下一首">⏭</button>
+          </div>
+          <div class="right-controls">
+            <button class="icon-button mode" id="mode" type="button" title="顺序播放"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>
+            <span title="音量"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></span>
+            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.82">
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 专注模式遮罩：唱片 + 时钟 + 精简播放栏 -->
+  <div class="focus-overlay" id="focusOverlay">
+    <div class="focus-clock" id="focusClock">00:00</div>
+    <div class="focus-date" id="focusDate"></div>
+    <div class="focus-record" id="focusFilm">
+      <div class="focus-record-label">
+        <img id="focusFilmImg" alt="">
+      </div>
+      <div class="focus-record-hole"></div>
+    </div>
+    <div class="focus-player">
+      <div class="focus-track" id="focusTrackTitle">未在播放</div>
+      <div class="focus-timeline">
+        <span id="focusCur">0:00</span>
+        <input id="focusSeek" type="range" min="0" max="1000" value="0" aria-label="进度">
+        <span id="focusTotal">0:00</span>
+      </div>
+      <div class="focus-controls">
+        <button id="focusPrev" type="button" title="上一首">⏮</button>
+        <button id="focusPlay" class="focus-play" type="button" title="播放">▶</button>
+        <button id="focusNext" type="button" title="下一首">⏭</button>
+      </div>
+      <div class="focus-volume">
+        <span title="音量">🔊</span>
+        <input id="focusVolume" type="range" min="0" max="1" step="0.01" value="0.82" aria-label="音量">
+      </div>
+    </div>
+  </div>
+
+  <!-- 小窗播放模式：左侧图片 + 右侧播放栏 -->
+  <div class="mini-overlay" id="miniOverlay">
+    <button class="mini-exit" id="miniExit" type="button" title="退出小窗" aria-label="退出小窗">✕</button>
+    <div class="mini-panel">
+      <div class="mini-art">
+        <img id="miniArtImg" alt="">
+      </div>
+      <div class="mini-body">
+        <div class="mini-track"><span id="miniTrackTitle">未在播放</span></div>
+        <div class="mini-timeline">
+          <span id="miniCur">0:00</span>
+          <input id="miniSeek" type="range" min="0" max="1000" value="0" aria-label="进度">
+          <span id="miniTotal">0:00</span>
+        </div>
+        <div class="mini-controls">
+          <button id="miniPrev" type="button" title="上一首">⏮</button>
+          <button id="miniPlay" class="mini-play" type="button" title="播放">▶</button>
+          <button id="miniNext" type="button" title="下一首">⏭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audio"></audio>
+
+  <div class="context-menu" id="contextMenu" style="display:none;"></div>
+
+  <script>
+    // ============================================================
+    // Hararu · 樱花音乐盒 —— 前端
+    // 后端：本地 node server.js（127.0.0.1:8787）
+    // ============================================================
+    const audio = document.getElementById("audio");
+    const folderInput = document.getElementById("folderInput");
+    const fileInput = document.getElementById("fileInput");
+    const listEl = document.getElementById("list");
+    const titleEl = document.getElementById("title");
+    const artistEl = document.getElementById("artist");
+    const statusEl = document.getElementById("status");
+    const currentTimeEl = document.getElementById("currentTime");
+    const totalTimeEl = document.getElementById("totalTime");
+    const seekEl = document.getElementById("seek");
+    const volumeEl = document.getElementById("volume");
+    const playBtn = document.getElementById("play");
+    const modeBtn = document.getElementById("mode");
+    const coverEl = document.getElementById("cover");
+    const coverWrapEl = document.getElementById("coverWrap");
+    const backdropEl = document.getElementById("backdrop");
+    const searchEl = document.getElementById("search");
+    const appEl = document.getElementById("app");
+    const coverFilesInput = document.getElementById("coverFilesInput");
+    const coverFolderInput = document.getElementById("coverFolderInput");
+    const coverApiModeBtn = document.getElementById("coverApiMode");
+    const coverLocalModeBtn = document.getElementById("coverLocalMode");
+    const coverCountEl = document.getElementById("coverCount");
+    const coverApiInput = document.getElementById("coverApiInput");
+    const applyCoverApiBtn = document.getElementById("applyCoverApi");
+    const contextMenuEl = document.getElementById("contextMenu");
+
+    // ============================================================
+    // 窗口控制：无边框窗口拖动 + 最小化/最大化/关闭
+    // （壳版已开启 TauriApi，使用 window.__TAURI__；独立版自动降级）
+    // ============================================================
+    function getTauriWindow() {
+      try {
+        const w = window.__TAURI__?.window;
+        if (w && typeof w.getCurrentWindow === "function") {
+          return w.getCurrentWindow();
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    function setupWindowControls() {
+      const tauriWin = getTauriWindow();
+      const isTauriShell = !!tauriWin;
+      // 仅在壳版环境启用标题栏布局（独立版/浏览器直接打开时保持原布局）
+      if (isTauriShell) {
+        document.body.classList.add("has-titlebar");
+      } else {
+        // 非壳版环境隐藏自定义标题栏，恢复系统窗口
+        const tb = document.getElementById("titlebar");
+        if (tb) tb.style.display = "none";
+      }
+
+      // 拖动窗口：WebView2 支持 -webkit-app-region: drag；Tauri 也支持 data-tauri-drag-region
+      // （CSS 已设置，此处为兜底：监听标题栏 mousedown 触发 Tauri startDragging）
+      const titlebarEl = document.getElementById("titlebar");
+      if (titlebarEl && tauriWin && typeof tauriWin.startDragging === "function") {
+        titlebarEl.addEventListener("mousedown", (e) => {
+          // 只对非交互元素（标题区）触发拖动；按钮区域不触发
+          if (e.target.closest("button")) return;
+          if (e.button === 0) {
+            try { tauriWin.startDragging(); } catch (_) {}
+          }
+        });
+      }
+
+      // 最小化
+      document.getElementById("tbMin")?.addEventListener("click", () => {
+        if (tauriWin && tauriWin.minimize) tauriWin.minimize();
+      });
+      // 最大化/还原
+      document.getElementById("tbMax")?.addEventListener("click", async () => {
+        if (!tauriWin) return;
+        try {
+          if (typeof tauriWin.toggleMaximize === "function") {
+            await tauriWin.toggleMaximize();
+          } else if (tauriWin.isMaximized) {
+            const isMax = await tauriWin.isMaximized();
+            if (isMax) await tauriWin.unmaximize();
+            else await tauriWin.maximize();
+          }
+        } catch (_) {}
+      });
+      // 关闭
+      document.getElementById("tbClose")?.addEventListener("click", () => {
+        if (tauriWin && tauriWin.close) tauriWin.close();
+        else window.close();
+      });
+    }
+
+    // ============================================================
+    // 服务健康检测：8787 本地 node 服务是否在线
+    // ============================================================
+    function checkService() {
+      return fetch("http://127.0.0.1:8787/api/load-path", { cache: "no-store" })
+        .then((r) => r.ok)
+        .catch(() => false);
+    }
+
+    function showServiceBanner(show) {
+      const banner = document.getElementById("serviceBanner");
+      if (banner) banner.classList.toggle("visible", show);
+    }
+
+    document.getElementById("serviceRetry")?.addEventListener("click", async () => {
+      const ok = await checkService();
+      showServiceBanner(!ok);
+      if (ok) {
+        // 服务恢复后重新走恢复逻辑
+        window.location.reload();
+      }
+    });
+
+    // 启动时初始化窗口控制 + 服务检测
+    // （脚本位于 body 末尾，DOM 已就绪，直接执行）
+    setupWindowControls();
+    // 主动聚焦页面，否则快捷键（如 Ctrl+空格）需先按 F12 才生效
+    function forceFocus() {
+      try { window.focus(); } catch (_) {}
+      try {
+        const w = getTauriWindow();
+        if (w && typeof w.setFocus === "function") w.setFocus();
+        if (w && typeof w.show === "function") w.show();
+      } catch (_) {}
+      try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
+    }
+    setTimeout(forceFocus, 200);
+    setTimeout(forceFocus, 800);
+    setTimeout(forceFocus, 1600);
+    setTimeout(forceFocus, 3000);
+    // 额外尝试：短暂聚焦一个隐藏输入框，试图让 WebView2 获得"键盘焦点"，
+    // 使 Ctrl+空格 等快捷键无需先手动点击输入框即可生效（不改变窗口尺寸）。
+    function activateKeyboardFocus() {
+      try {
+        let dummy = document.createElement("input");
+        dummy.type = "text";
+        dummy.setAttribute("autocomplete", "off");
+        dummy.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;";
+        document.body.appendChild(dummy);
+        dummy.focus();
+        setTimeout(function () {
+          try { dummy.remove(); } catch (_) {}
+          try { document.body.focus(); } catch (_) {}
+        }, 600);
+      } catch (_) {}
+    }
+    setTimeout(activateKeyboardFocus, 400);
+    setTimeout(activateKeyboardFocus, 1200);
+    setTimeout(activateKeyboardFocus, 2600);
+    // 页面获得焦点或用户点击时，也保持焦点（防止焦点被夺走导致快捷键失效）
+    window.addEventListener("focus", forceFocus);
+    window.addEventListener("mousedown", forceFocus);
+    document.addEventListener("visibilitychange", forceFocus);
+
+    // （已移除启动时 setSize 微调：壳会对每次 setSize 再加约 20px，
+    //  反复 setSize 会导致窗口每次启动变长。窗口尺寸完全交给壳配置决定。）
+    setTimeout(async () => {
+      const ok = await checkService();
+      showServiceBanner(!ok);
+    }, 1200);
+
+    const audioTypes = new Set(["mp3", "flac", "wav", "ogg", "m4a", "aac"]);
+    const imageTypes = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
+    const defaultCoverApiUrl = "https://api.cnmiw.com/api.php?sort=CDNrandom&type=json&num=5";
+    // 单次抓取的图片数量上限：把 API 的 num 提到这个值，避免"永远只循环固定几张封面"
+    const DEFAULT_COVER_COUNT = 30;
+
+    // 内置樱花渐变占位封面（SVG data URI，永不裂图）
+    const FALLBACK_COVER = coverEl.src;
+
+    let tracks = [];
+    let filtered = [];
+    let current = -1;
+    let shuffle = false;
+    let repeatMode = 0;            // 0=顺序 1=单曲 2=全部循环
+    let userSeeking = false;
+    let apiCovers = [];
+    let coverRequest = null;
+    let localCovers = [];
+    let pathCoverLoaded = false;
+    let lastCoverSrc = "";        // 上一次显示的封面源地址（去时间戳），用于保证下次切歌不是同一张
+    let searchQuery = "";
+    let coverMode = localStorage.getItem("hararuCoverMode") || "api";
+    coverApiInput.value = localStorage.getItem("hararuCoverApiUrl") || defaultCoverApiUrl;
+    let coverReferer = localStorage.getItem("hararuCoverReferer") || "";
+    document.getElementById("coverRefererInput").value = coverReferer;
+
+    // 单一模式按钮：0=随机 1=顺序 2=单曲 3=全部
+    const MODE_ICONS = [
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="currentColor" stroke="none">1</text></svg>',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'
+    ];
+    const MODE_TITLES = ["随机播放", "顺序播放", "单曲循环", "全部循环"];
+
+    // ---------- 工具函数 ----------
+    function toProxiedCoverUrl(url) {
+      if (!coverReferer) return url;
+      if (!/^https?:\/\//i.test(url)) return url;
+      // 本地 node 服务 (127.0.0.1:8787) 的图片直接加载，不走代理
+      if (/^https?:\/\/(127\.0\.0\.1|localhost):8787\//i.test(url)) return url;
+      return `http://127.0.0.1:8787/api/proxy?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(coverReferer)}`;
+    }
+
+    audio.volume = Number(localStorage.getItem("hararuVolume") || volumeEl.value);
+
+    function formatTime(value) {
+      if (!Number.isFinite(value)) return "0:00";
+      const minutes = Math.floor(value / 60);
+      const seconds = Math.floor(value % 60).toString().padStart(2, "0");
+      return `${minutes}:${seconds}`;
+    }
+
+    function cleanName(name) {
+      return name.replace(/\.[^.]+$/, "").replace(/_/g, " ").trim();
+    }
+
+    function splitArtist(name) {
+      const clean = cleanName(name);
+      const parts = clean.split(/\s+-\s+/);
+      if (parts.length > 1) {
+        return { artist: parts[0], title: parts.slice(1).join(" - ") };
+      }
+      return { artist: "本地文件", title: clean };
+    }
+
+    function getFolderName(file) {
+      const path = file.webkitRelativePath || file.name;
+      const pieces = path.split("/");
+      return pieces.length > 1 ? pieces.slice(0, -1).join(" / ") : "手动导入";
+    }
+
+    function makeTrack(file, index) {
+      const info = splitArtist(file.name);
+      return {
+        id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
+        file,
+        url: URL.createObjectURL(file),
+        title: info.title,
+        artist: info.artist,
+        folder: getFolderName(file),
+        duration: NaN
+      };
+    }
+
+    // ---------- 导入 ----------
+    function addFiles(files) {
+      const valid = Array.from(files).filter((file) => {
+        const ext = file.name.split(".").pop().toLowerCase();
+        return file.type.startsWith("audio/") || audioTypes.has(ext);
+      });
+      if (!valid.length) return;
+      tracks.forEach((track) => URL.revokeObjectURL(track.url));
+      tracks = valid
+        .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, "zh-Hans-CN"))
+        .map(makeTrack);
+      current = tracks.length ? 0 : -1;
+      applySearch();
+      if (tracks.length) { loadTrack(0, false); probeDurations(); }
+    }
+
+    function readDirectoryEntry(entry) {
+      const reader = entry.createReader();
+      const entries = [];
+      return new Promise((resolve, reject) => {
+        const readBatch = () => {
+          reader.readEntries((batch) => {
+            if (!batch.length) { resolve(entries); return; }
+            entries.push(...batch);
+            readBatch();
+          }, reject);
+        };
+        readBatch();
+      });
+    }
+
+    function fileFromEntry(entry) {
+      return new Promise((resolve, reject) => entry.file(resolve, reject));
+    }
+
+    async function collectFilesFromEntry(entry) {
+      if (!entry) return [];
+      if (entry.isFile) return [await fileFromEntry(entry)];
+      if (!entry.isDirectory) return [];
+      const children = await readDirectoryEntry(entry);
+      const nested = await Promise.all(children.map(collectFilesFromEntry));
+      return nested.flat();
+    }
+
+    async function collectDroppedFiles(dataTransfer) {
+      const items = Array.from(dataTransfer.items || []);
+      const entries = items
+        .map((item) => typeof item.webkitGetAsEntry === "function" ? item.webkitGetAsEntry() : null)
+        .filter(Boolean);
+      if (entries.length) {
+        const nested = await Promise.all(entries.map(collectFilesFromEntry));
+        return nested.flat();
+      }
+      return Array.from(dataTransfer.files || []);
+    }
+
+    function isImageFile(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      return file.type.startsWith("image/") || imageTypes.has(ext);
+    }
+
+    // ---------- 本地封面 (IndexedDB，兜底) ----------
+    function openCoverDb() {
+      return new Promise((resolve, reject) => {
+        if (!window.indexedDB) { reject(new Error("IndexedDB unavailable")); return; }
+        const request = indexedDB.open("hararu-cover-db", 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains("covers")) {
+            db.createObjectStore("covers", { keyPath: "id" });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function loadLocalCovers() {
+      // 如果已经从文件夹路径加载过封面，则跳过 IndexedDB，避免覆盖
+      if (pathCoverLoaded) { updateCoverControls(); return; }
+      try {
+        const db = await openCoverDb();
+        const coversFromDb = await new Promise((resolve, reject) => {
+          const tx = db.transaction("covers", "readonly");
+          const request = tx.objectStore("covers").getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+        });
+        localCovers.forEach((cover) => URL.revokeObjectURL(cover.url));
+        localCovers = coversFromDb
+          .sort((a, b) => a.id - b.id)
+          .map((item) => ({ name: item.name, url: URL.createObjectURL(item.blob) }));
+      } catch (error) {
+        console.warn("Local covers unavailable:", error);
+        localCovers = [];
+      }
+      updateCoverControls();
+    }
+
+    async function saveLocalCoverFiles(files) {
+      const valid = Array.from(files).filter(isImageFile);
+      if (!valid.length) return;
+      try {
+        const db = await openCoverDb();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction("covers", "readwrite");
+          const store = tx.objectStore("covers");
+          store.clear();
+          valid.forEach((file, index) => {
+            store.put({ id: index, name: file.name, blob: file, lastModified: file.lastModified });
+          });
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+        await loadLocalCovers();
+        setCoverMode("local");
+      } catch (error) {
+        console.warn("Unable to save local covers:", error);
+      }
+    }
+
+    function updateCoverControls() {
+      coverApiModeBtn.classList.toggle("active", coverMode === "api");
+      coverLocalModeBtn.classList.toggle("active", coverMode === "local");
+      coverCountEl.textContent = coverMode === "api"
+        ? "本地代理 API"
+        : (localCovers.length ? `${localCovers.length} 张本地图片` : "未选择图片");
+      coverApiInput.disabled = coverMode !== "api";
+      applyCoverApiBtn.disabled = coverMode !== "api";
+    }
+
+    function setCoverMode(mode) {
+      coverMode = mode;
+      localStorage.setItem("hararuCoverMode", coverMode);
+      updateCoverControls();
+      if (tracks[current]) {
+        setCoverForTrack(tracks[current]);
+      } else {
+        setStartupCover();
+      }
+    }
+
+    function getCoverApiUrl() {
+      const raw = (coverApiInput.value || "").trim() || defaultCoverApiUrl;
+      // 自动把 num 提到 DEFAULT_COVER_COUNT：即使之前保存的是 num=5，
+      // 也让 API 模式每次抓更多张，避免封面永远固定那几张。
+      const re = /\bnum=(\d+)/i;
+      if (re.test(raw)) return raw.replace(re, "num=" + DEFAULT_COVER_COUNT);
+      return raw + (raw.includes("?") ? "&" : "?") + "num=" + DEFAULT_COVER_COUNT;
+    }
+
+    function applyCoverApiUrl() {
+      const nextUrl = getCoverApiUrl();
+      coverApiInput.value = nextUrl;
+      localStorage.setItem("hararuCoverApiUrl", nextUrl);
+      coverReferer = document.getElementById("coverRefererInput").value.trim();
+      localStorage.setItem("hararuCoverReferer", coverReferer);
+      apiCovers = [];
+      coverRequest = null;
+      setCoverMode("api");
+      saveAllConfig();
+    }
+
+    // ---------- 列表渲染 ----------
+    function applySearch() {
+      searchQuery = searchEl.value.trim().toLowerCase();
+      filtered = tracks.filter((track) => {
+        const haystack = `${track.title} ${track.artist} ${track.folder}`.toLowerCase();
+        return haystack.includes(searchQuery);
+      });
+      renderList();
+      statusEl.textContent = tracks.length ? `${tracks.length} 首歌曲` : "本地音乐";
+    }
+
+    function highlight(text) {
+      if (!searchQuery) return escapeHtml(text);
+      const lower = text.toLowerCase();
+      let idx = lower.indexOf(searchQuery);
+      if (idx < 0) return escapeHtml(text);
+      const before = escapeHtml(text.slice(0, idx));
+      const match = escapeHtml(text.slice(idx, idx + searchQuery.length));
+      const after = highlight(text.slice(idx + searchQuery.length));
+      return `${before}<mark>${match}</mark>${after}`;
+    }
+
+    function renderList() {
+      if (!filtered.length) {
+        listEl.innerHTML = `<div class="empty"><div class="big">🌸</div>${tracks.length ? "没有匹配的歌曲～" : "拖入歌曲，或导入音乐文件夹"}</div>`;
+        return;
+      }
+      const rows = filtered.map((track, i) => {
+        const trackIndex = tracks.indexOf(track);
+        const active = trackIndex === current ? " active" : "";
+        return `
+          <div class="row${active}" data-index="${trackIndex}">
+            <div class="index">${String(i + 1).padStart(2, "0")}</div>
+            <div>
+              <div class="song-title">${highlight(track.title)}</div>
+              <div class="song-path">${escapeHtml(track.artist)} · ${escapeHtml(track.folder)}</div>
+            </div>
+            <div class="duration">${formatTime(track.duration)}</div>
+            <div class="row-actions" data-remove="${trackIndex}" title="从列表移除">✕</div>
+          </div>
+        `;
+      }).join("");
+      listEl.innerHTML = rows;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[char]));
+    }
+
+    // ---------- 封面 ----------
+    function fallbackCoverFor(track) {
+      if (coverMode === "local" && localCovers.length) {
+        return localCovers[Math.abs(hashCode(track.title + track.artist)) % localCovers.length].url;
+      }
+      return FALLBACK_COVER;
+    }
+
+    function applyCover(url, fallback) {
+      url = toProxiedCoverUrl(url);
+      coverEl.style.opacity = "0";
+      const swap = () => {
+        coverEl.onerror = () => {
+          coverEl.onerror = null;
+          coverEl.src = fallback || FALLBACK_COVER;
+          backdropEl.style.setProperty("--cover", "none");
+          coverEl.style.opacity = "1";
+        };
+        coverEl.referrerPolicy = "no-referrer";
+        coverEl.src = url;
+        backdropEl.style.setProperty("--cover", `url("${url.replace(/"/g, '\\"')}")`);
+        coverEl.style.opacity = "1";
+      };
+      setTimeout(swap, 60);
+    }
+
+    function applyCoverSequence(urls, fallback) {
+      const queue = urls.filter(Boolean).map(toProxiedCoverUrl);
+      const tryNext = () => {
+        const url = queue.shift();
+        if (!url) {
+          coverEl.onerror = null;
+          coverEl.src = fallback || FALLBACK_COVER;
+          backdropEl.style.setProperty("--cover", "none");
+          return;
+        }
+        coverEl.onerror = tryNext;
+        coverEl.referrerPolicy = "no-referrer";
+        coverEl.src = url;
+        backdropEl.style.setProperty("--cover", `url("${url.replace(/"/g, '\\"')}")`);
+      };
+      tryNext();
+    }
+
+    function cacheBust(url) {
+      const joiner = url.includes("?") ? "&" : "?";
+      return `${url}${joiner}_=${Date.now()}`;
+    }
+
+    // 去掉我们加的"_"时间戳后缀，得到"源图地址"，用于判断是否与当前封面相同
+    function stripCacheBust(u) {
+      return String(u).replace(/[?&]_=\d+$/, "");
+    }
+
+    // 从池子里挑一张"不同于当前封面"的图，尽量保证每次切歌封面真的会变
+    function pickFreshCover(pool) {
+      if (!pool || !pool.length) return "";
+      if (pool.length === 1) return pool[0];
+      const cur = lastCoverSrc;
+      let idx = Math.floor(Math.random() * pool.length);
+      for (let t = 0; t < pool.length * 3 && stripCacheBust(pool[idx]) === cur; t++) {
+        idx = Math.floor(Math.random() * pool.length);
+      }
+      return pool[idx];
+    }
+
+    function extractImageUrls(payload) {
+      if (!payload) return [];
+      if (typeof payload === "string") {
+        if (/^https?:\/\//i.test(payload)) return [payload];
+        return [];
+      }
+      if (Array.isArray(payload)) return payload.flatMap(extractImageUrls);
+      if (typeof payload !== "object") return [];
+      var commonKeys = ["url", "img", "image", "pic", "data", "cover", "src",
+        "cover_url", "pic_url", "img_url", "image_url", "list", "result",
+        "urls", "imgs", "pics", "images", "thumbnail", "thumb", "coverUrl",
+        "coverImg", "background", "bg", "avatar", "banner", "poster"];
+      var direct = [];
+      commonKeys.forEach(function (k) {
+        if (k in payload) direct = direct.concat(extractImageUrls(payload[k]));
+      });
+      if (direct.length) return direct.filter(function (u, i, a) { return a.indexOf(u) === i; });
+      var results = [];
+      Object.keys(payload).forEach(function (k) {
+        var val = payload[k];
+        if (val && (typeof val === "object" || Array.isArray(val))) {
+          results = results.concat(extractImageUrls(val));
+        }
+      });
+      return results.filter(function (u, i, a) { return a.indexOf(u) === i; });
+    }
+
+    async function fetchApiCovers() {
+      if (coverRequest) return coverRequest;
+      coverRequest = (async () => {
+        const endpoint = getCoverApiUrl();
+        let remote = [];
+        try {
+          // 给请求附加时间戳：让上游 CDN 每次返回新图，避免命中缓存导致封面"固定不变"
+          const bustEndpoint = endpoint + (endpoint.includes("?") ? "&" : "?") + "_=" + Date.now();
+          const proxyUrl = `http://127.0.0.1:8787/api/proxy?url=${encodeURIComponent(bustEndpoint)}`;
+          const response = await fetch(proxyUrl, { cache: "no-store" });
+          const type = response.headers.get("content-type") || "";
+          if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
+          if (type.startsWith("image/")) {
+            const blob = await response.blob();
+            remote = [URL.createObjectURL(blob)];
+          } else {
+            const payload = await response.json();
+            remote = extractImageUrls(payload);
+          }
+        } catch (error) {
+          console.warn("Cover API unavailable:", endpoint, error);
+        }
+        // 本地随机图片兜底：远程 API 失效/无结果时仍能显示随机图
+        const localRandom = "http://127.0.0.1:8787/api/random-image";
+        // 去重；若远端口径返回的图太少，补齐本地随机图，尽量让封面不会永远固定几张
+        const merged = remote.filter(Boolean).filter((u, i, a) => a.indexOf(u) === i);
+        if (merged.length < 4) merged.push(localRandom);
+        if (!merged.length) merged.push(localRandom);
+        return merged;
+      })();
+      try {
+        apiCovers = await coverRequest;
+        return apiCovers;
+      } finally {
+        coverRequest = null;
+      }
+    }
+
+    async function setStartupCover() {
+      const fallback = FALLBACK_COVER;
+      if (coverMode === "local") {
+        const localCover = localCovers[0]?.url || fallback;
+        lastCoverSrc = stripCacheBust(localCover);
+        applyCover(localCover, fallback);
+        return;
+      }
+      applyCover(fallback, fallback);
+      const pool = await fetchApiCovers();
+      if (!pool.length || tracks.length) return;
+      const apiCover = pool[Math.floor(Math.random() * pool.length)];
+      lastCoverSrc = stripCacheBust(apiCover);
+      applyCover(/^https?:/i.test(apiCover) ? cacheBust(apiCover) : apiCover, fallback);
+    }
+
+    async function setCoverForTrack(track) {
+      const fallback = fallbackCoverFor(track);
+      if (coverMode === "local") {
+        // 本地模式：每次切歌也从本地图里挑一张不同的，保证封面真的会换
+        const localCover = pickFreshCover(localCovers.map((c) => c.url));
+        const localUrl = localCover && /^https?:/i.test(localCover) ? cacheBust(localCover) : (localCover || fallback);
+        lastCoverSrc = stripCacheBust(localCover || fallback);
+        applyCover(localUrl, FALLBACK_COVER);
+        return;
+      }
+      applyCover(fallback, fallback);
+      coverRequest = null;
+      const pool = await fetchApiCovers();
+      if (!pool.length || track !== tracks[current]) return;
+      const apiCover = pickFreshCover(pool);
+      lastCoverSrc = stripCacheBust(apiCover);
+      // 给 URL 加时间戳：本地随机图 / 远端图不会命中缓存，每次切歌都尽力换新
+      applyCover(/^https?:/i.test(apiCover) ? cacheBust(apiCover) : apiCover, fallback);
+    }
+
+    function hashCode(value) {
+      let hash = 0;
+      for (let i = 0; i < value.length; i += 1) {
+        hash = ((hash << 5) - hash) + value.charCodeAt(i);
+        hash |= 0;
+      }
+      return hash;
+    }
+
+    // ---------- 播放控制 ----------
+    function loadTrack(index, shouldPlay = true) {
+      if (!tracks[index]) return;
+      current = index;
+      const track = tracks[current];
+      audio.src = track.url;
+      titleEl.textContent = track.title;
+      artistEl.textContent = track.artist;
+      setCoverForTrack(track);
+      renderList();
+      scrollCurrentIntoView();
+      if (shouldPlay) {
+        audio.play().catch(() => {});
+      }
+    }
+
+    function scrollCurrentIntoView() {
+      const row = listEl.querySelector(".row.active");
+      if (row) row.scrollIntoView({ block: "nearest" });
+    }
+
+    // 打开时预读每首歌的时长：用隐藏的 <audio> 逐个读取元数据，
+    // 无需等用户点播即可在列表里正确显示时长（浏览器能解码即可读到）。
+    let durationProbeAudio = null;
+    let durationProbing = false;
+    function probeDurations() {
+      if (durationProbing) return;
+      const pending = tracks.filter(function (t) { return !Number.isFinite(t.duration); });
+      if (!pending.length) return;
+      durationProbing = true;
+      if (!durationProbeAudio) {
+        durationProbeAudio = new Audio();
+        durationProbeAudio.preload = "metadata";
+      }
+      let idx = 0;
+      function next() {
+        if (idx >= pending.length) { durationProbing = false; return; }
+        const t = pending[idx++];
+        let timer = null;
+        const cleanup = function () {
+          clearTimeout(timer);
+          durationProbeAudio.removeEventListener("loadedmetadata", onMeta);
+          durationProbeAudio.removeEventListener("error", onErr);
+        };
+        const onMeta = function () {
+          cleanup();
+          if (Number.isFinite(durationProbeAudio.duration)) t.duration = durationProbeAudio.duration;
+          renderList();
+          setTimeout(next, 0);
+        };
+        const onErr = function () {
+          cleanup();
+          setTimeout(next, 0);
+        };
+        durationProbeAudio.addEventListener("loadedmetadata", onMeta);
+        durationProbeAudio.addEventListener("error", onErr);
+        durationProbeAudio.src = t.url;
+        durationProbeAudio.load();
+        timer = setTimeout(onErr, 4000); // 单项 4 秒拿不到就跳过，避免卡住
+      }
+      next();
+    }
+
+    function togglePlay() {
+      if (!tracks.length) { folderInput.click(); return; }
+      if (current < 0) loadTrack(0, false);
+      if (audio.paused) {
+        audio.play().catch(() => {});
+      } else {
+        audio.pause();
+      }
+    }
+
+    function nextTrack() {
+      if (!tracks.length) return;
+      if (shuffle) {
+        const next = tracks.length === 1 ? 0 : Math.floor(Math.random() * tracks.length);
+        loadTrack(next === current ? (next + 1) % tracks.length : next);
+        return;
+      }
+      loadTrack((current + 1) % tracks.length);
+    }
+
+    function prevTrack() {
+      if (!tracks.length) return;
+      if (audio.currentTime > 3) {
+        audio.currentTime = 0;
+        return;
+      }
+      loadTrack((current - 1 + tracks.length) % tracks.length);
+    }
+
+    function removeTrack(index) {
+      if (index < 0 || index >= tracks.length) return;
+      const wasCurrent = index === current;
+      const wasPlaying = !audio.paused;
+      const removed = tracks[index];
+      if (removed.url && removed.url.startsWith("blob:")) URL.revokeObjectURL(removed.url);
+      tracks.splice(index, 1);
+      if (tracks.length === 0) {
+        current = -1;
+        audio.pause();
+        audio.removeAttribute("src");
+        titleEl.textContent = "选择音乐文件夹";
+        artistEl.textContent = "支持 MP3、FLAC、WAV、OGG、M4A、AAC";
+        statusEl.textContent = "本地音乐";
+      } else if (wasCurrent) {
+        current = Math.min(index, tracks.length - 1);
+        loadTrack(current, wasPlaying);
+      } else if (index < current) {
+        current -= 1;
+      }
+      applySearch();
+    }
+
+    function clearTracks() {
+      tracks.forEach((track) => { if (track.url && track.url.startsWith("blob:")) URL.revokeObjectURL(track.url); });
+      tracks = [];
+      current = -1;
+      audio.pause();
+      audio.removeAttribute("src");
+      titleEl.textContent = "选择音乐文件夹";
+      artistEl.textContent = "支持 MP3、FLAC、WAV、OGG、M4A、AAC";
+      statusEl.textContent = "本地音乐";
+      applySearch();
+    }
+
+    let combinedMode = 1;   // 0=随机 1=顺序 2=单曲 3=全部
+
+    // 单一模式按钮：点一下在 随机→顺序→单曲→全部 之间循环
+    function applyCombinedMode(mode) {
+      combinedMode = ((mode % 4) + 4) % 4;
+      if (combinedMode === 0) { shuffle = true; repeatMode = 0; }
+      else { shuffle = false; repeatMode = combinedMode - 1; }
+      if (modeBtn) {
+        modeBtn.innerHTML = MODE_ICONS[combinedMode];
+        modeBtn.title = MODE_TITLES[combinedMode];
+        modeBtn.classList.toggle("on", combinedMode !== 1); // 顺序为默认态不点亮
+      }
+      localStorage.setItem("hararuShuffle", shuffle ? "1" : "0");
+      localStorage.setItem("hararuRepeatMode", String(repeatMode));
+      saveAllConfig().catch(function () {});
+    }
+    function cycleRepeat() {
+      applyCombinedMode((combinedMode + 1) % 4);
+    }
+
+    // ---------- 右键菜单 ----------
+    function showContextMenu(x, y, items) {
+      contextMenuEl.innerHTML = "";
+      items.forEach((item) => {
+        if (item.sep) {
+          const sep = document.createElement("div");
+          sep.className = "menu-sep";
+          contextMenuEl.appendChild(sep);
+          return;
+        }
+        const div = document.createElement("div");
+        div.className = "menu-item" + (item.danger ? " danger" : "");
+        div.textContent = item.label;
+        div.addEventListener("click", () => { hideContextMenu(); item.action(); });
+        contextMenuEl.appendChild(div);
+      });
+      contextMenuEl.style.display = "block";
+      const rect = contextMenuEl.getBoundingClientRect();
+      let left = x, top = y;
+      if (left + rect.width > window.innerWidth) left = window.innerWidth - rect.width - 8;
+      if (top + rect.height > window.innerHeight) top = window.innerHeight - rect.height - 8;
+      contextMenuEl.style.left = left + "px";
+      contextMenuEl.style.top = top + "px";
+    }
+
+    function hideContextMenu() {
+      contextMenuEl.style.display = "none";
+    }
+
+    // ============================================================
+    // 事件绑定
+    // ============================================================
+    document.getElementById("pickFolder").addEventListener("click", async () => {
+      const used = await pickMusicFolderWithPicker();
+      if (!used) { folderInput.value = ""; folderInput.click(); }
+    });
+    document.getElementById("pickFiles").addEventListener("click", () => {
+      fileInput.value = "";
+      fileInput.click();
+    });
+    folderInput.addEventListener("change", (event) => addFiles(event.target.files));
+    fileInput.addEventListener("change", (event) => addFiles(event.target.files));
+    document.getElementById("pickCoverFiles").addEventListener("click", () => {
+      coverFilesInput.value = "";
+      coverFilesInput.click();
+    });
+    document.getElementById("pickCoverFolder").addEventListener("click", async () => {
+      const used = await pickCoverFolderWithPicker();
+      if (!used) { coverFolderInput.value = ""; coverFolderInput.click(); }
+    });
+    coverFilesInput.addEventListener("change", (event) => saveLocalCoverFiles(event.target.files));
+    coverFolderInput.addEventListener("change", (event) => saveLocalCoverFiles(event.target.files));
+    coverApiModeBtn.addEventListener("click", () => setCoverMode("api"));
+    coverLocalModeBtn.addEventListener("click", () => setCoverMode("local"));
+    applyCoverApiBtn.addEventListener("click", applyCoverApiUrl);
+    coverApiInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); applyCoverApiUrl(); }
+    });
+    document.getElementById("coverRefererInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); applyCoverApiUrl(); }
+    });
+    searchEl.addEventListener("input", applySearch);
+
+    // 列表点击：播放 / 移除
+    listEl.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest(".row-actions");
+      if (removeBtn) {
+        event.stopPropagation();
+        removeTrack(Number(removeBtn.dataset.remove));
+        return;
+      }
+      const row = event.target.closest(".row");
+      if (row) loadTrack(Number(row.dataset.index));
+    });
+
+    // 列表右键菜单
+    listEl.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const row = event.target.closest(".row");
+      if (!row) {
+        showContextMenu(event.clientX, event.clientY, [
+          { label: "🌸 清空播放列表", danger: true, action: () => clearTracks() }
+        ]);
+        return;
+      }
+      const index = Number(row.dataset.index);
+      const track = tracks[index];
+      showContextMenu(event.clientX, event.clientY, [
+        { label: "▶ 播放", action: () => loadTrack(index) },
+        { label: "⏭ 下一首播放", action: () => { loadTrack(index); } },
+        { sep: true },
+        { label: "✕ 从列表移除", danger: true, action: () => removeTrack(index) },
+        { label: "🗑 清空播放列表", danger: true, action: () => clearTracks() }
+      ]);
+    });
+
+    // 点击其他区域关闭右键菜单（mousedown 也要，避免拖动窗口时 click 不触发导致关不掉）
+    document.addEventListener("click", hideContextMenu);
+    document.addEventListener("mousedown", (event) => {
+      // 点的是菜单项本身时不隐藏，否则会先隐藏菜单导致菜单项动作不触发
+      if (event.target.closest("#contextMenu")) return;
+      hideContextMenu();
+    });
+    // 屏蔽浏览器默认右键菜单（原生弹窗）
+    document.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    // 封面点击换一张
+    coverWrapEl.addEventListener("click", () => {
+      if (!tracks[current]) { setStartupCover(); return; }
+      setCoverForTrack(tracks[current]);
+    });
+
+    // 把当前封面图片保存到本地（优先弹"另存为"对话框，失败则走下载）
+    async function saveCoverImage() {
+      const el = document.getElementById("cover");
+      const url = el && el.src ? el.src : null;
+      if (!url) return;
+      const name = "hararu-cover_" + Date.now() + ".jpg";
+      // 1) 用 File System Access API 弹"另存为"窗口（需在用户手势内同步调用）
+      if (typeof window.showSaveFilePicker === "function") {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: name,
+            types: [{ description: "图片", accept: { "image/*": [".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"] } }]
+          });
+          const blob = await fetch(url).then(function (r) { return r.blob(); });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        } catch (e) {
+          if (e && e.name === "AbortError") return; // 用户取消
+          // 其它错误回退到下载
+        }
+      }
+      // 2) 兜底：a.download 触发浏览器下载
+      try {
+        const blob = await fetch(url).then(function (r) { return r.blob(); });
+        const sub = (blob.type || "image/jpeg").split("/")[1] || "jpg";
+        const ext = sub === "jpeg" ? "jpg" : sub;
+        const obj = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = obj;
+        a.download = "hararu-cover_" + Date.now() + "." + ext;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(obj); }, 3000);
+      } catch (e) {
+        console.warn("[保存封面失败]", e);
+      }
+    }
+
+    // 绑定"右键封面 → 保存到本地"菜单
+    function bindCoverMenu(el) {
+      if (!el) return;
+      el.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showContextMenu(event.clientX, event.clientY, [
+          { label: "💾 保存封面到本地", action: saveCoverImage }
+        ]);
+      });
+    }
+    bindCoverMenu(coverWrapEl);
+
+    playBtn.addEventListener("click", togglePlay);
+    document.getElementById("next").addEventListener("click", nextTrack);
+    document.getElementById("prev").addEventListener("click", prevTrack);
+    modeBtn?.addEventListener("click", cycleRepeat);
+
+    audio.addEventListener("play", () => {
+      playBtn.textContent = "⏸";
+      playBtn.title = "暂停";
+      coverWrapEl.classList.add("playing");
+    });
+    audio.addEventListener("pause", () => {
+      playBtn.textContent = "▶";
+      playBtn.title = "播放";
+      coverWrapEl.classList.remove("playing");
+    });
+    audio.addEventListener("loadedmetadata", () => {
+      const track = tracks[current];
+      if (track) { track.duration = audio.duration; renderList(); }
+      totalTimeEl.textContent = formatTime(audio.duration);
+    });
+    audio.addEventListener("timeupdate", () => {
+      if (!userSeeking && Number.isFinite(audio.duration)) {
+        seekEl.value = String((audio.currentTime / audio.duration) * 1000);
+      }
+      currentTimeEl.textContent = formatTime(audio.currentTime);
+    });
+    audio.addEventListener("ended", () => {
+      if (repeatMode === 1) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+        return;
+      }
+      // 顺序模式：最后一首播完即停；全部循环 / 随机：继续
+      if (repeatMode === 0 && !shuffle && current === tracks.length - 1) {
+        audio.currentTime = 0;
+        return;
+      }
+      nextTrack();
+    });
+    // 音频加载失败自动下一首
+    audio.addEventListener("error", () => {
+      if (tracks.length && current >= 0) {
+        console.warn("Audio error, skipping:", tracks[current].title);
+        setTimeout(() => nextTrack(), 300);
+      }
+    });
+
+    seekEl.addEventListener("input", () => {
+      userSeeking = true;
+      if (Number.isFinite(audio.duration)) {
+        currentTimeEl.textContent = formatTime((Number(seekEl.value) / 1000) * audio.duration);
+      }
+    });
+    seekEl.addEventListener("change", () => {
+      if (Number.isFinite(audio.duration)) {
+        audio.currentTime = (Number(seekEl.value) / 1000) * audio.duration;
+      }
+      userSeeking = false;
+    });
+    volumeEl.addEventListener("input", () => {
+      audio.volume = Number(volumeEl.value);
+      localStorage.setItem("hararuVolume", volumeEl.value);
+    });
+
+    // 同步所有音量条显示（主播放栏 + 专注模式）
+    function syncVolumeDisplays() {
+      if (volumeEl) volumeEl.value = audio.volume;
+      var fv = document.getElementById("focusVolume");
+      if (fv) fv.value = audio.volume;
+    }
+
+    // ---------- 快捷键 ----------
+    document.addEventListener("keydown", (event) => {
+      // 输入法合成期间（isComposing / keyCode 229）不触发快捷键，避免与中文输入法冲突
+      if (event.isComposing || event.keyCode === 229) return;
+      // 仅对文本输入类跳过快捷键（range 滑块不跳过，保证专注/小窗下上下键可调音量）
+      if (event.target.matches("input") && event.target.type !== "range") return;
+      if (event.code === "Space" && !event.ctrlKey && !event.metaKey) { event.preventDefault(); togglePlay(); }
+      if (event.code === "ArrowRight") audio.currentTime = Math.min((audio.currentTime || 0) + 5, audio.duration || 0);
+      if (event.code === "ArrowLeft") audio.currentTime = Math.max((audio.currentTime || 0) - 5, 0);
+      if (event.code === "ArrowUp") { event.preventDefault(); audio.volume = Math.min(1, (audio.volume || 0) + 0.05); syncVolumeDisplays(); }
+      if (event.code === "ArrowDown") { event.preventDefault(); audio.volume = Math.max(0, (audio.volume || 0) - 0.05); syncVolumeDisplays(); }
+      if (event.key === "r" || event.key === "R" || event.key === "s" || event.key === "S") cycleRepeat();
+      if (event.key === "Delete") { if (current >= 0) removeTrack(current); }
+    });
+    // Ctrl+F 聚焦搜索
+    document.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchEl.focus();
+        searchEl.select();
+      }
+    });
+
+    // Alt+Enter 全屏/退出全屏（输入框内也生效）
+    document.addEventListener("keydown", (event) => {
+      if (event.altKey && (event.key === "Enter" || event.code === "Enter")) {
+        event.preventDefault();
+        if (document.fullscreenElement) {
+          if (document.exitFullscreen) document.exitFullscreen();
+        } else if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      }
+    });
+
+    // ---------- 拖放 ----------
+    ["dragenter", "dragover"].forEach((type) => {
+      window.addEventListener(type, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        appEl.classList.add("drop-active");
+      }, true);
+    });
+    ["dragleave", "drop"].forEach((type) => {
+      window.addEventListener(type, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        appEl.classList.remove("drop-active");
+      }, true);
+    });
+    window.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const files = await collectDroppedFiles(event.dataTransfer);
+      const imageFiles = files.filter(isImageFile);
+      const audioFiles = files.filter((file) => {
+        const ext = file.name.split(".").pop().toLowerCase();
+        return file.type.startsWith("audio/") || audioTypes.has(ext);
+      });
+      if (imageFiles.length && !audioFiles.length) {
+        saveLocalCoverFiles(imageFiles);
+        return;
+      }
+      addFiles(audioFiles.length ? audioFiles : files);
+    }, true);
+
+    // ============================================================
+    // 目录选择（showDirectoryPicker，仅作导入用，不做恢复）
+    // ============================================================
+    function openSessionDb() {
+      return new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(new Error("IndexedDB 不可用")); return; }
+        var req = indexedDB.open("hararu-session-db", 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains("handles")) {
+            db.createObjectStore("handles");
+          }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+    }
+
+    function isAudioFile(file) {
+      var ext = file.name.split(".").pop().toLowerCase();
+      return file.type.startsWith("audio/") || audioTypes.has(ext);
+    }
+    function isImageFileSimple(file) {
+      var ext = file.name.split(".").pop().toLowerCase();
+      return file.type.startsWith("image/") || imageTypes.has(ext);
+    }
+
+    function walkDir(dirHandle, prefix, filterFn) {
+      var results = [];
+      var iterator = dirHandle.values();
+      function readNext() {
+        return iterator.next().then(function (entry) {
+          if (entry.done) return results;
+          var item = entry.value;
+          if (item.kind === "file") {
+            return item.getFile().then(function (file) {
+              if (filterFn(file)) {
+                var relPath = prefix ? prefix + "/" + item.name : item.name;
+                try {
+                  Object.defineProperty(file, "webkitRelativePath", { value: relPath, writable: false });
+                } catch (_) {}
+                results.push(file);
+              }
+              return readNext();
+            });
+          } else if (item.kind === "directory") {
+            var subPrefix = prefix ? prefix + "/" + item.name : item.name;
+            return walkDir(item, subPrefix, filterFn).then(function (sub) {
+              results = results.concat(sub);
+              return readNext();
+            });
+          }
+          return readNext();
+        });
+      }
+      return readNext();
+    }
+
+    function pickMusicFolderWithPicker() {
+      if (!window.showDirectoryPicker) return Promise.resolve(false);
+      return window.showDirectoryPicker({ mode: "read" }).then(function (handle) {
+        return walkDir(handle, "", isAudioFile).then(function (files) {
+          if (!files.length) return false;
+          addFiles(files);
+          statusEl.textContent = files.length + " 首歌曲 · " + handle.name;
+          return true;
+        });
+      }).catch(function (e) {
+        if (e.name === "AbortError" || e.name === "SecurityError") return false;
+        console.warn("showDirectoryPicker 失败:", e);
+        return false;
+      });
+    }
+
+    function pickCoverFolderWithPicker() {
+      if (!window.showDirectoryPicker) return Promise.resolve(false);
+      return window.showDirectoryPicker({ mode: "read" }).then(function (handle) {
+        return walkDir(handle, "", isImageFileSimple).then(function (files) {
+          if (!files.length) return false;
+          return saveLocalCoverFiles(files).then(function () { return true; });
+        });
+      }).catch(function (e) {
+        if (e.name === "AbortError" || e.name === "SecurityError") return false;
+        console.warn("showDirectoryPicker 失败:", e);
+        return false;
+      });
+    }
+
+    // ============================================================
+    // 路径记忆（服务端 session.json，权威来源）
+    // ============================================================
+    // 已记住的路径（内存 + localStorage 缓存）。
+    // 缓存用于：启动时立即回填输入框、并防止"输入框为空时的自动保存"覆盖掉已记住的路径。
+    let knownMusicFolder = "";
+    let knownCoverFolder = "";
+    function cacheKnownPaths() {
+      try {
+        const cp = JSON.parse(localStorage.getItem("hararuPaths") || "{}");
+        knownMusicFolder = cp.musicFolder || "";
+        knownCoverFolder = cp.coverFolder || "";
+        if (knownMusicFolder) document.getElementById("pathInput").value = knownMusicFolder;
+        if (knownCoverFolder) document.getElementById("coverPathInput").value = knownCoverFolder;
+      } catch (_) {}
+    }
+    function persistKnownPaths() {
+      try {
+        localStorage.setItem("hararuPaths", JSON.stringify({ musicFolder: knownMusicFolder, coverFolder: knownCoverFolder }));
+      } catch (_) {}
+    }
+    // 启动时立即回填（同步，避免异步恢复前被清空）
+    cacheKnownPaths();
+
+    function saveAllConfig() {
+      // 从输入框读路径；若输入框为空但已记住过路径，则沿用已记住的，避免误清空
+      var mf = document.getElementById("pathInput").value.trim();
+      var cf = document.getElementById("coverPathInput").value.trim();
+      if (mf) knownMusicFolder = mf;
+      else mf = knownMusicFolder;
+      if (cf) knownCoverFolder = cf;
+      else cf = knownCoverFolder;
+      persistKnownPaths();
+      var config = {
+        musicFolder: mf,
+        coverFolder: cf,
+        coverApiUrl: getCoverApiUrl(),
+        coverReferer: coverReferer,
+        coverMode: coverMode,
+        volume: audio.volume,
+        repeatMode: repeatMode,
+        shuffle: shuffle
+      };
+      return fetch("http://127.0.0.1:8787/api/save-path", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config)
+      });
+    }
+
+    function loadPathFromServer() {
+      return fetch("http://127.0.0.1:8787/api/load-path").then(function (r) { return r.json(); });
+    }
+
+    function loadAudioFromPath(path) {
+      return fetch("http://127.0.0.1:8787/api/list-audio?dir=" + encodeURIComponent(path)).then(function (r) {
+        return r.json();
+      }).then(function (data) {
+        if (!data.files || !data.files.length) return false;
+        tracks.forEach(function (t) { if (t.url && t.url.startsWith("blob:")) URL.revokeObjectURL(t.url); });
+        tracks = data.files.map(function (f, i) {
+          var info = splitArtist(f.name);
+          var folderParts = f.relPath.split("/");
+          folderParts.pop();
+          return {
+            id: f.name + "-" + f.size + "-" + Math.floor(f.lastModified) + "-" + i,
+            file: null,
+            url: "http://127.0.0.1:8787/api/audio?file=" + encodeURIComponent(f.path),
+            title: info.title,
+            artist: info.artist,
+            folder: folderParts.join(" / ") || "手动导入",
+            duration: NaN
+          };
+        });
+        current = tracks.length ? 0 : -1;
+        applySearch();
+        if (tracks.length) { loadTrack(0, false); probeDurations(); }
+        var folderName = data.folder.replace(/\\/g, "/").split("/").filter(Boolean).pop() || data.folder;
+        statusEl.textContent = tracks.length + " 首歌曲 · " + folderName;
+        return true;
+      });
+    }
+
+    function loadCoverImagesFromPath(path) {
+      return fetch("http://127.0.0.1:8787/api/list-images?dir=" + encodeURIComponent(path))
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          if (!data.files || !data.files.length) return false;
+          localCovers.forEach(function (c) { if (c.url && c.url.startsWith("blob:")) URL.revokeObjectURL(c.url); });
+          localCovers = data.files.map(function (f) {
+            return { name: f.name, url: "http://127.0.0.1:8787/api/image?file=" + encodeURIComponent(f.path) };
+          });
+          pathCoverLoaded = true;
+          updateCoverControls();
+          if (coverMode === "local") setCoverMode("local");
+          return true;
+        })
+        .catch(function (e) {
+          console.error("[封面路径加载失败]", path, e);
+          return false;
+        });
+    }
+
+    function initPathMemory() {
+      var input = document.getElementById("pathInput");
+      var statusEl = document.getElementById("pathStatus");
+      var coverInput = document.getElementById("coverPathInput");
+      var coverStatus = document.getElementById("coverPathStatus");
+      loadPathFromServer().then(function (config) {
+        // ① 先从服务端恢复路径到输入框+内存（务必在最前面，否则下面的
+        //    applyCombinedMode 会触发 saveAllConfig，趁输入框还没回填就把路径写成空）
+        if (config && config.musicFolder) {
+          input.value = config.musicFolder;
+          knownMusicFolder = config.musicFolder;
+        }
+        if (config && config.coverFolder) {
+          coverInput.value = config.coverFolder;
+          knownCoverFolder = config.coverFolder;
+        }
+        if (knownMusicFolder || knownCoverFolder) persistKnownPaths();
+        // 恢复 API 设置
+        if (config && config.coverApiUrl) {
+          coverApiInput.value = config.coverApiUrl;
+          localStorage.setItem("hararuCoverApiUrl", config.coverApiUrl);
+        }
+        if (config && config.coverReferer) {
+          coverReferer = config.coverReferer;
+          document.getElementById("coverRefererInput").value = coverReferer;
+          localStorage.setItem("hararuCoverReferer", coverReferer);
+        }
+        if (config && config.coverMode) {
+          setCoverMode(config.coverMode);
+        }
+        // 恢复音量与循环模式（此时已知路径已设置，saveAllConfig 不会再清空路径）
+        if (config && typeof config.volume === "number") {
+          audio.volume = Math.min(1, Math.max(0, config.volume));
+          volumeEl.value = audio.volume;
+        }
+        if (config && typeof config.repeatMode === "number") {
+          const rMode = config.repeatMode % 3;
+          const sh = (config && typeof config.shuffle === "boolean") ? config.shuffle : false;
+          applyCombinedMode(sh ? 0 : (rMode + 1));
+        } else if (config && typeof config.shuffle === "boolean") {
+          applyCombinedMode(config.shuffle ? 0 : 1);
+        }
+        // 恢复封面图片文件夹
+        if (config && config.coverFolder) {
+          coverStatus.textContent = "正在恢复封面...";
+          loadCoverImagesFromPath(config.coverFolder).then(function (ok) {
+            coverStatus.textContent = ok ? "✓ 已恢复封面图片" : "封面路径无效，请重新设置";
+          });
+        } else {
+          coverStatus.textContent = config && config.coverApiUrl ? "未保存封面路径" : "未保存封面路径";
+        }
+        // 恢复音乐文件夹（权威来源，串行执行）
+        if (config && config.musicFolder) {
+          statusEl.textContent = "正在恢复...";
+          return loadAudioFromPath(config.musicFolder).then(function (ok) {
+            statusEl.textContent = ok ? "✓ 已恢复上次的文件夹" : "路径文件已变更，请重新设置";
+          });
+        }
+      }).catch(function (e) {
+        statusEl.textContent = "";
+        coverStatus.textContent = "配置读取失败";
+        console.error("[initPathMemory]", e);
+      });
+    }
+
+    document.getElementById("savePathBtn").addEventListener("click", function () {
+      var path = document.getElementById("pathInput").value.trim();
+      var statusEl = document.getElementById("pathStatus");
+      if (!path) { statusEl.textContent = "请输入路径"; return; }
+      statusEl.textContent = "保存中...";
+      saveAllConfig().then(function () {
+        return loadAudioFromPath(path);
+      }).then(function (ok) {
+        if (ok) statusEl.textContent = "✓ 已记住";
+        else statusEl.textContent = "该路径下没有找到音乐文件";
+      }).catch(function (e) {
+        statusEl.textContent = "保存失败: " + e.message;
+        console.warn("保存路径失败:", e);
+      });
+    });
+
+    document.getElementById("pathInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        document.getElementById("savePathBtn").click();
+      }
+    });
+
+    document.getElementById("saveCoverPathBtn").addEventListener("click", function () {
+      var path = document.getElementById("coverPathInput").value.trim();
+      var coverStatus = document.getElementById("coverPathStatus");
+      if (!path) { coverStatus.textContent = "请输入路径"; return; }
+      coverStatus.textContent = "保存中...";
+      saveAllConfig().then(function () {
+        return loadCoverImagesFromPath(path);
+      }).then(function (ok) {
+        if (ok) coverStatus.textContent = "✓ 已记住封面";
+        else coverStatus.textContent = "该路径下没有找到图片";
+      }).catch(function (e) {
+        coverStatus.textContent = "保存失败: " + e.message;
+        console.warn("保存封面路径失败:", e);
+      });
+    });
+
+    document.getElementById("coverPathInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        document.getElementById("saveCoverPathBtn").click();
+      }
+    });
+
+    // 定期保存音量/循环（切歌时保存进度）
+    audio.addEventListener("pause", () => saveAllConfig().catch(() => {}));
+
+    // ============================================================
+    // 专注模式（唱片 + 时钟 + 精简播放栏）与小窗播放模式（图片左 + 播放栏右）
+    // 右上角 tbFocus / tbMini 按钮切换
+    // ============================================================
+    const focusOverlay = document.getElementById("focusOverlay");
+    const focusClock = document.getElementById("focusClock");
+    const focusDate = document.getElementById("focusDate");
+    const focusFilm = document.getElementById("focusFilm");
+    const focusFilmImg = document.getElementById("focusFilmImg");
+    const focusTrackTitle = document.getElementById("focusTrackTitle");
+    const focusCur = document.getElementById("focusCur");
+    const focusTotal = document.getElementById("focusTotal");
+    const focusSeek = document.getElementById("focusSeek");
+    const focusPlayBtn = document.getElementById("focusPlay");
+
+    const miniOverlay = document.getElementById("miniOverlay");
+    const miniArtImg = document.getElementById("miniArtImg");
+    const miniTrackTitle = document.getElementById("miniTrackTitle");
+    const miniCur = document.getElementById("miniCur");
+    const miniTotal = document.getElementById("miniTotal");
+    const miniSeek = document.getElementById("miniSeek");
+    const miniPlayBtn = document.getElementById("miniPlay");
+    const miniExitBtn = document.getElementById("miniExit");
+
+    // 小窗封面右键 → 保存到本地（复用主界面的保存逻辑）
+    bindCoverMenu(miniArtImg);
+
+    // 小窗：左键按住空白区拖动窗口（不用 app-region，避免右键触发系统菜单）
+    miniOverlay.addEventListener("mousedown", async (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest(".mini-exit, .mini-art, .mini-controls button, .mini-timeline input")) return;
+      try {
+        const win = await getTauriWin();
+        if (win && typeof win.startDragging === "function") win.startDragging();
+      } catch (_) {}
+    });
+
+    // 普通模式：左键按住空白区（功能区之外）也可拖动窗口
+    appEl?.addEventListener("mousedown", async (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest("button, input, a, .row, .titlebar, .player, .cover-wrap, .context-menu, .library, .list, .workspace")) return;
+      try {
+        const win = await getTauriWin();
+        if (win && typeof win.startDragging === "function") win.startDragging();
+      } catch (_) {}
+    });
+
+    // 专注模式：按住任意空白处拖动窗口
+    focusOverlay?.addEventListener("mousedown", async (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest("button, input")) return;
+      try {
+        const win = await getTauriWin();
+        if (win && typeof win.startDragging === "function") win.startDragging();
+      } catch (_) {}
+    });
+
+    let focusMode = false;
+    let miniMode = false;
+    let focusClockTimer = null;
+    let tbHideTimer = null;
+    let miniExitTimer = null;
+
+    function updateFocusClock() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      focusClock.textContent = hh + ":" + mm + ":" + ss;
+      const week = ["日", "一", "二", "三", "四", "五", "六"][now.getDay()];
+      focusDate.textContent = now.getFullYear() + "年" + (now.getMonth() + 1) + "月" + now.getDate() + "日 · 星期" + week;
+    }
+
+    function syncModeImages() {
+      if (coverEl && coverEl.src) {
+        focusFilmImg.src = coverEl.src;
+        miniArtImg.src = coverEl.src;
+      }
+    }
+
+    function setBtnState(id, active, title) {
+      const b = document.getElementById(id);
+      if (b) { b.classList.toggle("on", active); b.title = title; }
+    }
+
+    function clearFocusClock() {
+      if (focusClockTimer) { clearInterval(focusClockTimer); focusClockTimer = null; }
+    }
+
+    // 专注模式
+    function enterFocusMode() {
+      const wasMini = miniMode;
+      focusMode = true;
+      miniMode = false;
+      focusOverlay.classList.add("show");
+      miniOverlay.classList.remove("show");
+      document.body.classList.add("focus-mode");
+      document.body.classList.remove("mini-mode");
+      setBtnState("tbFocus", true, "退出专注模式");
+      setBtnState("tbMini", false, "小窗播放");
+      document.querySelector(".titlebar-controls")?.classList.remove("visible");
+      updateFocusClock();
+      if (!focusClockTimer) focusClockTimer = setInterval(updateFocusClock, 1000);
+      syncModeImages();
+      focusTrackTitle.textContent = tracks[current] ? tracks[current].title : "未在播放";
+      focusCur.textContent = currentTimeEl.textContent;
+      focusTotal.textContent = totalTimeEl.textContent;
+      focusSeek.value = seekEl.value;
+      syncVolumeDisplays();          // 同步音量和各音量条（专注模式声音条实时反映当前音量）
+      focusPlayBtn.textContent = audio.paused ? "▶" : "⏸";
+      focusFilm.classList.toggle("playing", !audio.paused);
+      // 从小窗切到专注：恢复普通窗口尺寸（专注模式用普通大小）
+      if (wasMini) {
+        restoreNormalSize();
+      }
+    }
+    function exitFocusMode() {
+      focusMode = false;
+      focusOverlay.classList.remove("show");
+      document.body.classList.remove("focus-mode");
+      document.querySelector(".titlebar-controls")?.classList.remove("visible");
+      setBtnState("tbFocus", false, "专注模式");
+      clearFocusClock();
+    }
+
+    // 小窗播放模式：进入时缩小，退出时恢复固定的普通窗口尺寸
+    async function getTauriWin() {
+      try {
+        const w = window.__TAURI__?.window;
+        if (w && typeof w.getCurrentWindow === "function") return w.getCurrentWindow();
+      } catch (_) {}
+      return null;
+    }
+
+    // ============================================================
+    // 小窗/专注模式的窗口尺寸管理（参考 timeless.exe 的稳定实现）
+    // 原则：
+    //   1. 不再做"跨启动尺寸记忆"：每次打开窗口尺寸由启动时的固定默认决定，
+    //      彻底避免 setSize 叠加导致窗口越变越长（旧的 +20px 递增 bug）。
+    //   2. 会话内用 outerSize() 记录普通窗口的真实物理尺寸，
+    //      供"小窗 → 普通/专注"切换时准确恢复。
+    //   3. isRestoring 锁：恢复尺寸期间不记录 resize，防止把中间态当作用户尺寸。
+    //   4. 防抖 300ms：只在用户手动拖拽停止后记录。
+    // ============================================================
+    let normalWindowSize = null;   // 普通窗口的真实物理尺寸（inner 逻辑尺寸，会话内记忆）
+    let isRestoring = false;       // 是否正在恢复尺寸（期间不记录 resize）
+    let sizeUpdateTimer = null;
+
+    async function readNormalSize() {
+      // 统一使用 CSS 逻辑像素（innerWidth/innerHeight）：与 setSize(LogicalSize) 同基准，
+      // 避免 outerSize() 返回物理像素在 DPI≠100% 时与逻辑尺寸混淆，导致窗口恢复时被放大
+      // （参考 timeless.exe：用同一基准记录/恢复窗口尺寸，杜绝累积与漂移）。
+      const w = window.innerWidth || 0;
+      const h = window.innerHeight || 0;
+      if (w > 0 && h > 0) return { width: w, height: h };
+      return null;
+    }
+
+    // 用户手动拖拽（或普通窗口尺寸变化）时，防抖记录真实物理尺寸
+    function recordNormalSize() {
+      if (miniMode || focusMode || isRestoring) return;
+      if (!window.__TAURI__) return;
+      clearTimeout(sizeUpdateTimer);
+      sizeUpdateTimer = setTimeout(async () => {
+        const s = await readNormalSize();
+        if (s) normalWindowSize = s;
+      }, 300);
+    }
+    window.addEventListener("resize", recordNormalSize);
+
+    async function applySize(w, h) {
+      try {
+        const win = await getTauriWin();
+        if (!win || typeof win.setSize !== "function") return;
+        const DPI = window.__TAURI__?.dpi;
+        if (DPI && DPI.LogicalSize) await win.setSize(new DPI.LogicalSize(w, h));
+        else await win.setSize({ width: w, height: h });
+      } catch (_) {}
+    }
+    // 每次改完窗口尺寸后回到屏幕中心（实现"中心缩放"：放大/缩小都居中）。
+    // 注意：PakePlus 禁用了 setPosition/outerPosition，所以不能做"持续围绕中心"拖动缩放，
+    // 只能退而求其次——每次改完尺寸后 center() 让窗口居中。
+    async function centerWindow() {
+      try {
+        const win = await getTauriWin();
+        if (win && typeof win.center === "function") await win.center();
+      } catch (_) {}
+    }
+
+    // 记录最后一次鼠标的屏幕坐标（用于"以鼠标为中心缩放"；快捷键触发时用最后一次移动的位置）
+    let lastMouseCenter = { x: null, y: null };
+    window.addEventListener("mousemove", (e) => {
+      if (typeof e.screenX === "number") lastMouseCenter = { x: e.screenX, y: e.screenY };
+    }, true);
+
+    // 以鼠标为中心定位窗口（需要壳允许 setPosition；若被禁用则回退到屏幕居中 center()）
+    async function positionWindowCentered(mx, my, w, h) {
+      try {
+        const win = await getTauriWin();
+        if (!win) return;
+        let moved = false;
+        if (typeof win.setPosition === "function" && typeof mx === "number" && typeof my === "number") {
+          try {
+            const DPI = window.__TAURI__?.dpi;
+            const x = Math.max(0, Math.round(mx - w / 2));
+            const y = Math.max(0, Math.round(my - h / 2));
+            if (DPI && DPI.LogicalPosition) { await win.setPosition(new DPI.LogicalPosition(x, y)); moved = true; }
+            else { await win.setPosition({ x: x, y: y }); moved = true; }
+          } catch (_) {}
+        }
+        if (!moved) { await centerWindow(); }
+      } catch (_) {}
+    }
+
+    // 取消过渡：直接把窗口切到目标尺寸，并一步居中到锚点（鼠标屏幕坐标）。
+    // 不保留任何缩放/位移动画，因此没有卡顿感。
+    async function setWindowSizeCentered(targetW, targetH, cx, cy) {
+      try {
+        const win = await getTauriWin();
+        if (!win || typeof win.setSize !== "function") return;
+        const DPI = window.__TAURI__?.dpi;
+        const setS = (w, h) => DPI && DPI.LogicalSize ? win.setSize(new DPI.LogicalSize(w, h)) : win.setSize({ width: w, height: h });
+        const setP = (x, y) => DPI && DPI.LogicalPosition ? win.setPosition(new DPI.LogicalPosition(x, y)) : win.setPosition({ x: x, y: y });
+        await setS(targetW, targetH);
+        if (typeof cx === "number" && typeof cy === "number" && typeof win.setPosition === "function") {
+          await setP(Math.max(0, Math.round(cx - (targetW + OH_w) / 2)), Math.max(0, Math.round(cy - (targetH + OH_h) / 2)));
+        } else if (typeof win.center === "function") {
+          await win.center();
+        }
+      } catch (_) {}
+    }
+
+    // 壳对 setSize 会再加约 OH 像素（setSize(W,H) → 窗口 ≈ W+OH_w 宽 × H+OH_h 高）。
+    // 进入小窗时实测校准，用于"小窗 → 普通"恢复时做补偿，保证恢复后尺寸准确。
+    let OH_w = 0;
+    let OH_h = 0;
+
+    async function getMiniSize() {
+      // 目标高度 130（壳加约 20 → 实测约 150），图片做成正方形填满内容区
+      return { width: 400, height: 130 };
+    }
+
+    // 恢复普通窗口尺寸（从小窗/专注切回普通时）
+    async function restoreNormalSize() {
+      isRestoring = true;
+      try {
+        if (normalWindowSize) {
+          // 减去壳叠加量补偿，使 setSize 后实际窗口 == 记录的真实尺寸
+          const target = {
+            width: Math.max(0, normalWindowSize.width - OH_w),
+            height: Math.max(0, normalWindowSize.height - OH_h)
+          };
+          // 平滑缩放回普通尺寸（以鼠标为中心，保证绕鼠标缩放、不闪跳）
+          // 直接切回普通尺寸（以鼠标为中心，无过渡）
+          await setWindowSizeCentered(target.width, target.height, lastMouseCenter.x, lastMouseCenter.y);
+        }
+      } catch (_) {}
+      // 等待系统重绘/缩放完成后解锁，期间不记录 resize（防止把恢复过程当作用户拖拽）
+      setTimeout(() => { isRestoring = false; }, 800);
+    }
+
+    // 启动时固定为默认尺寸（常量 → 每次结果一致，不会越变越长/窄）
+    const DEFAULT_W = 1150;
+    const DEFAULT_H = 820;
+    const START_OH_W = 0;   // 壳对 setSize 的宽度叠加量（启动用固定近似值）
+    const START_OH_H = 20;  // 壳对 setSize 的高度叠加量（启动用固定近似值）
+    async function forceDefaultSize() {
+      if (miniMode || focusMode) return;
+      await applySize(Math.max(0, DEFAULT_W - START_OH_W), Math.max(0, DEFAULT_H - START_OH_H));
+      // 设置尺寸后再居中（防止 setSize 使窗口偏离屏幕中心）
+      try {
+        const win = await getTauriWin();
+        if (win && typeof win.center === "function") await win.center();
+      } catch (_) {}
+    }
+    // 启动时固定为默认尺寸：等 __TAURI__ 就绪后立即执行（不等 250ms），
+    // 把"壳按旧记忆创建出的偏差尺寸"尽快拉回，缩短闪变窗口；
+    // 配合关闭前校正后，下次启动壳创建的就是目标尺寸，启动瞬间即正确、无闪变。
+    (function initDefaultSize() {
+      const tryApply = function () {
+        if (window.__TAURI__ && window.__TAURI__.window &&
+            typeof window.__TAURI__.window.getCurrentWindow === "function") {
+          forceDefaultSize();
+        } else {
+          setTimeout(tryApply, 50);
+        }
+      };
+      tryApply();
+    })();
+
+    // 关闭前校正窗口尺寸（根治启动闪变 + 初始固定 1150×800）：
+    // 壳会把"关闭时窗口的 inner 逻辑尺寸"×DPI 保存到
+    // %APPDATA%\com.pakeplus.pacbao\ccaedcfae.json 的 window_size，
+    // 下次启动时作为 setSize 目标，且壳对 setSize 会再叠加约 20px 高度。
+    // 因此关闭前把窗口校正为「当前实际尺寸 − 叠加量」，使壳保存的值 = 当前尺寸−20，
+    // 下次启动叠加 20 后恰好等于当前尺寸。
+    // 用「当前尺寸」而非固定默认值作为校正目标：关闭时窗口尺寸几乎不变（仅 −20px），
+    // 避免关闭瞬间被强制跳到默认尺寸造成「关闭闪变」；初始尺寸由启动时 forceDefaultSize 固定。
+    // 关键：onCloseRequested 必须 preventDefault 阻止窗口立刻关闭，
+    // 待 await setSize 完成后再由我们手动关闭窗口；否则 async 校正不会生效，
+    // 壳仍会保存未校正的尺寸，导致下次启动先偏大再被拉回（旧的闪变 bug）。
+    async function setupCloseSizeFix() {
+      try {
+        const win = await getTauriWin();
+        if (!win || typeof win.onCloseRequested !== "function") return;
+        let closeFixed = false; // 重入保护：校正完成后放行真正的关闭
+        win.onCloseRequested(async (event) => {
+          if (closeFixed) return; // 第二次触发（我们手动 close）：放行关闭
+          closeFixed = true;
+          try {
+            if (event && typeof event.preventDefault === "function") {
+              event.preventDefault(); // 阻止窗口立刻关闭，等待尺寸校正
+            }
+            const DPI = window.__TAURI__?.dpi;
+            if (DPI && DPI.LogicalSize && typeof win.setSize === "function") {
+              // 用「当前实际窗口尺寸 − 壳叠加量」作为校正目标：
+              // 关闭时窗口尺寸几乎不变（仅 −20px），避免关闭闪变；
+              // 壳保存的值 = 当前尺寸−20，下次启动叠加 20 后恰好等于当前尺寸。
+              const w = window.innerWidth || DEFAULT_W;
+              const h = Math.max(100, (window.innerHeight || DEFAULT_H) - START_OH_H);
+              await win.setSize(new DPI.LogicalSize(w, h));
+            }
+          } catch (_) {}
+          // 校正完成后真正关闭（再次触发 onCloseRequested，被重入保护放行）
+          try {
+            await win.close();
+          } catch (_) {
+            try { if (typeof win.destroy === "function") await win.destroy(); } catch (__) {}
+          }
+        });
+      } catch (_) {}
+    }
+    setupCloseSizeFix();
+
+    async function enterMiniMode() {
+      miniMode = true;
+      focusMode = false;
+      miniOverlay.classList.add("show");
+      focusOverlay.classList.remove("show");
+      document.body.classList.add("mini-mode");
+      document.body.classList.remove("focus-mode");
+      document.querySelector(".titlebar-controls")?.classList.remove("visible");
+      setBtnState("tbMini", true, "退出小窗播放");
+      setBtnState("tbFocus", false, "专注模式");
+      clearFocusClock();
+      syncModeImages();
+      miniTrackTitle.textContent = tracks[current] ? tracks[current].title : "未在播放";
+      miniCur.textContent = currentTimeEl.textContent;
+      miniTotal.textContent = totalTimeEl.textContent;
+      miniSeek.value = seekEl.value;
+      miniPlayBtn.textContent = audio.paused ? "▶" : "⏸";
+      // 进入小窗前记录当前普通窗口的真实物理尺寸（供退出时恢复）
+      const s = await readNormalSize();
+      if (s) normalWindowSize = s;
+      const m = await getMiniSize();
+      // 以鼠标为中心平滑缩放进入小窗（连续 setSize+setPosition，窗口绕鼠标中心缩放，不闪跳）
+      // 直接切到小窗尺寸（以鼠标为中心，无过渡，不卡顿）
+      await setWindowSizeCentered(m.width, m.height, lastMouseCenter.x, lastMouseCenter.y);
+      // 小窗稳定后实测壳的叠加量（setSize 目标 → 实际窗口物理尺寸 的差值）
+      await new Promise(function (r) { setTimeout(r, 200); });
+      const ms = await readNormalSize();
+      if (ms) {
+        OH_w = Math.max(0, ms.width - m.width);
+        OH_h = Math.max(0, ms.height - m.height);
+      }
+    }
+    async function exitMiniMode() {
+      miniMode = false;
+      miniOverlay.classList.remove("show");
+      document.body.classList.remove("mini-mode");
+      setBtnState("tbMini", false, "小窗播放");
+      // 退出小窗：恢复到进入小窗前的普通窗口尺寸
+      await restoreNormalSize();
+    }
+
+    document.getElementById("tbFocus")?.addEventListener("click", () => focusMode ? exitFocusMode() : enterFocusMode());
+    document.getElementById("tbMini")?.addEventListener("click", () => miniMode ? exitMiniMode() : enterMiniMode());
+
+    // 置顶窗口按钮（Pin）：切换 always-on-top，点亮 .on 表示已置顶
+    let windowAlwaysOnTop = false;
+    const tbPinBtn = document.getElementById("tbPin");
+    tbPinBtn?.addEventListener("click", async () => {
+      try {
+        const win = await getTauriWin();
+        if (!win || typeof win.setAlwaysOnTop !== "function") return;
+        windowAlwaysOnTop = !windowAlwaysOnTop;
+        await win.setAlwaysOnTop(windowAlwaysOnTop);
+        tbPinBtn.classList.toggle("on", windowAlwaysOnTop);
+        tbPinBtn.title = windowAlwaysOnTop ? "取消置顶" : "置顶窗口";
+      } catch (_) {}
+    });
+
+    // 小窗切换（Ctrl+空格）与专注切换（Ctrl+回车）
+    let miniToggleGuard = false;
+    function toggleMiniMode() {
+      if (miniToggleGuard) return; // 防止同一按键多次触发导致"进入又退出"
+      miniToggleGuard = true;
+      setTimeout(function () { miniToggleGuard = false; }, 250);
+      if (miniMode) exitMiniMode(); else enterMiniMode();
+    }
+    let focusToggleGuard = false;
+    function toggleFocusMode() {
+      if (focusToggleGuard) return;
+      focusToggleGuard = true;
+      setTimeout(function () { focusToggleGuard = false; }, 250);
+      if (focusMode) exitFocusMode(); else enterFocusMode();
+    }
+    // window 捕获阶段单一监听（不受焦点/冒泡影响，也不会重复触发）
+    window.addEventListener("keydown", (event) => {
+      // 输入法合成期间不响应快捷键，避免与中文输入法冲突
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.ctrlKey && event.code === "Enter") {
+        event.preventDefault();
+        toggleFocusMode();
+      }
+      if (event.ctrlKey && event.code === "Space") {
+        event.preventDefault();
+        toggleMiniMode();
+      }
+      // Ctrl+M：小窗切换备用键（中文输入法可能吞掉 Ctrl+空格）
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.code === "KeyM" || event.key.toLowerCase() === "m")) {
+        event.preventDefault();
+        toggleMiniMode();
+      }
+    }, true);
+
+    // 媒体键 / 播放控制：Fn+F7 上一首、Fn+F8 播放暂停、Fn+F9 下一首
+    window.addEventListener("keydown", (event) => {
+      const c = event.code || "";
+      const k = event.key || "";
+      if (c === "F7" || k === "MediaTrackPrevious") { event.preventDefault(); if (tracks.length) prevTrack(); }
+      else if (c === "F8" || k === "MediaPlayPause") { event.preventDefault(); togglePlay(); }
+      else if (c === "F9" || k === "MediaTrackNext") { event.preventDefault(); if (tracks.length) nextTrack(); }
+    }, true);
+    // 注册系统媒体会话（后台时媒体键尽量仍能控制播放）
+    try {
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.setActionHandler("pause", function () { if (!audio.paused) audio.pause(); });
+        navigator.mediaSession.setActionHandler("play", function () { if (audio.paused && tracks.length) audio.play().catch(function () {}); });
+        navigator.mediaSession.setActionHandler("previoustrack", function () { if (tracks.length) prevTrack(); });
+        navigator.mediaSession.setActionHandler("nexttrack", function () { if (tracks.length) nextTrack(); });
+      }
+    } catch (_) {}
+
+    // 常规界面双击 → 进入专注模式；专注模式界面双击 → 退回普通模式
+    appEl?.addEventListener("dblclick", (event) => {
+      if (event.target.closest("button, input, a, .row, .titlebar, .player, .focus-overlay, .mini-overlay")) return;
+      if (focusMode || miniMode) return;
+      enterFocusMode();
+    });
+    // 专注模式遮罩双击（避开按钮/进度条）→ 回到普通模式
+    focusOverlay?.addEventListener("dblclick", (event) => {
+      if (event.target.closest("button, input")) return;
+      if (focusMode) exitFocusMode();
+    });
+
+    // 小窗模式：鼠标滑到右上角时短暂显示退出按钮
+    miniExitBtn?.addEventListener("click", () => { if (miniMode) exitMiniMode(); });
+    window.addEventListener("mousemove", (event) => {
+      if (!miniMode) return;
+      clearTimeout(miniExitTimer);
+      const inCorner = event.clientY < 64 && event.clientX > window.innerWidth - 90;
+      if (inCorner) {
+        miniExitBtn?.classList.add("show");
+        miniExitTimer = setTimeout(() => miniExitBtn?.classList.remove("show"), 2000);
+      } else {
+        miniExitBtn?.classList.remove("show");
+      }
+    });
+
+    // 专注模式下：标题栏按钮过一段时间自动隐藏，鼠标移入顶部时暂时显示
+    function setTitlebarVisible(vis) {
+      document.querySelector(".titlebar-controls")?.classList.toggle("visible", vis);
+    }
+    window.addEventListener("mousemove", (event) => {
+      if (!focusMode) return;
+      clearTimeout(tbHideTimer);
+      if (event.clientY < 60) {
+        setTitlebarVisible(true);
+        tbHideTimer = setTimeout(() => setTitlebarVisible(false), 2500);
+      } else {
+        setTitlebarVisible(false);
+      }
+    });
+
+    // 专注模式精简播放栏
+    document.getElementById("focusPlay")?.addEventListener("click", togglePlay);
+    document.getElementById("focusPrev")?.addEventListener("click", prevTrack);
+    document.getElementById("focusNext")?.addEventListener("click", nextTrack);
+    focusSeek.addEventListener("input", () => {
+      userSeeking = true;
+      if (Number.isFinite(audio.duration)) {
+        focusCur.textContent = formatTime((Number(focusSeek.value) / 1000) * audio.duration);
+      }
+    });
+    focusSeek.addEventListener("change", () => {
+      if (Number.isFinite(audio.duration)) {
+        audio.currentTime = (Number(focusSeek.value) / 1000) * audio.duration;
+      }
+      userSeeking = false;
+    });
+    document.getElementById("focusVolume").addEventListener("input", (event) => {
+      audio.volume = Number(event.target.value);
+      localStorage.setItem("hararuVolume", event.target.value);
+    });
+
+    // 小窗播放栏
+    document.getElementById("miniPlay")?.addEventListener("click", togglePlay);
+    document.getElementById("miniPrev")?.addEventListener("click", prevTrack);
+    document.getElementById("miniNext")?.addEventListener("click", nextTrack);
+    miniSeek.addEventListener("input", () => {
+      userSeeking = true;
+      if (Number.isFinite(audio.duration)) {
+        miniCur.textContent = formatTime((Number(miniSeek.value) / 1000) * audio.duration);
+      }
+    });
+    miniSeek.addEventListener("change", () => {
+      if (Number.isFinite(audio.duration)) {
+        audio.currentTime = (Number(miniSeek.value) / 1000) * audio.duration;
+      }
+      userSeeking = false;
+    });
+    // 双击小窗图片退出小窗模式（窗口栏按钮在小窗下隐藏，Ctrl+空格也可退出）
+    miniArtImg.addEventListener("dblclick", () => { if (miniMode) exitMiniMode(); });
+
+    // 播放状态变化时同步专注 / 小窗界面
+    audio.addEventListener("play", () => {
+      focusPlayBtn.textContent = "⏸";
+      miniPlayBtn.textContent = "⏸";
+      focusFilm.classList.add("playing");
+      if (focusMode) focusTrackTitle.textContent = tracks[current] ? tracks[current].title : "未在播放";
+      if (miniMode) miniTrackTitle.textContent = tracks[current] ? tracks[current].title : "未在播放";
+    });
+    audio.addEventListener("pause", () => {
+      focusPlayBtn.textContent = "▶";
+      miniPlayBtn.textContent = "▶";
+      focusFilm.classList.remove("playing");
+    });
+    audio.addEventListener("timeupdate", () => {
+      if (focusMode && !userSeeking && Number.isFinite(audio.duration)) {
+        focusSeek.value = String((audio.currentTime / audio.duration) * 1000);
+      }
+      if (miniMode && !userSeeking && Number.isFinite(audio.duration)) {
+        miniSeek.value = String((audio.currentTime / audio.duration) * 1000);
+      }
+      if (focusMode) focusCur.textContent = currentTimeEl.textContent;
+      if (miniMode) miniCur.textContent = currentTimeEl.textContent;
+    });
+    audio.addEventListener("loadedmetadata", () => {
+      if (focusMode) focusTotal.textContent = formatTime(audio.duration);
+      if (miniMode) miniTotal.textContent = formatTime(audio.duration);
+    });
+
+    // 封面变化时同步两张模式的图片（API/本地切换都会更新 cover 的 src）
+    if (window.MutationObserver && coverEl) {
+      new MutationObserver(syncModeImages).observe(coverEl, { attributes: true, attributeFilter: ["src"] });
+    }
+
+    // ============================================================
+    // 启动：串行恢复（IndexedDB 兜底封面 → 服务端路径恢复）
+    // 注意：不使用已废弃的 showDirectoryPicker 句柄恢复，
+    // 以免与 session.json 权威来源并行写同一份 tracks 互相覆盖。
+    // ============================================================
+    updateCoverControls();
+    // 恢复上次的模式（本地）
+    const savedRepeat = localStorage.getItem("hararuRepeatMode");
+    const savedShuffle = localStorage.getItem("hararuShuffle");
+    if (savedRepeat !== null || savedShuffle !== null) {
+      const sh = savedShuffle === "1";
+      const rMode = savedRepeat !== null ? (Number(savedRepeat) % 3) : 0;
+      applyCombinedMode(sh ? 0 : (rMode + 1));
+    }
+    loadLocalCovers().then(function () {
+      initPathMemory();
+      setStartupCover();
+    });
+  </script>
+</body>
+</html>
