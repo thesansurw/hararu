@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/32275223/README.md)
+[README.md](https://github.com/user-attachments/files/32275518/README.md)
 # 🌸 Hararu 樱花音乐播放器
 
 一款 Windows 桌面音乐播放器。樱花粉少女风界面，支持本地音乐播放、随机封面展示、网易云 .uc 缓存解密，以及完整的状态记忆（音乐目录 / 封面目录 / 音量 / 循环模式重启自动恢复）。
@@ -21,7 +21,9 @@
 
 ![主界面](screenshots/main.png)
 
-![小窗专注模式](screenshots/compact.png)
+![小窗模式](screenshots/compact.png)
+
+![专注模式](screenshots/focus.png)
 
 ## 🧱 技术架构
 
