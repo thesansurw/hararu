@@ -1,0 +1,3 @@
+Hararu player running at http://127.0.0.1:8787/
+API proxy: http://127.0.0.1:8787/api/proxy?url=<encoded-url>
+Local audio:  http://127.0.0.1:8787/api/list-audio?dir=<folder>
